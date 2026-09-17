@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 460" role="img" aria-labelledby="title desc">
+  <title id="title">The Drift</title><desc id="desc">A tall, narrow mist creature with a long flowing wake</desc>
+  <defs><radialGradient id="bg" cx="42%" cy="38%" r="80%"><stop stop-color="#32424a"/><stop offset="1" stop-color="#10191e"/></radialGradient><filter id="blur"><feGaussianBlur stdDeviation="12"/></filter></defs>
+  <rect width="640" height="460" fill="url(#bg)"/><circle cx="480" cy="88" r="92" fill="#b9dbc9" opacity=".08"/>
+  <g fill="none" stroke="#9ccab9" stroke-linecap="round">
+    <path d="M314 62 C278 132 278 199 307 254 C326 292 278 343 222 414" stroke-width="64" opacity=".15" filter="url(#blur)"/>
+    <path d="M323 58 C287 124 289 197 317 249 C340 291 294 346 240 416" stroke-width="22" opacity=".78"/>
+    <path d="M305 132 C260 178 243 235 255 292" stroke-width="9" opacity=".53"/>
+    <path d="M336 139 C388 196 392 248 371 305" stroke-width="11" opacity=".44"/>
+    <path d="M319 252 C375 307 390 361 362 428" stroke-width="7" opacity=".35"/>
+  </g>
+  <ellipse cx="319" cy="104" rx="31" ry="49" fill="#152329" stroke="#b7dfca" stroke-width="3"/>
+  <circle cx="309" cy="98" r="4" fill="#e7ffdf"/><circle cx="329" cy="98" r="4" fill="#e7ffdf"/>
+  <path d="M70 377 C177 331 217 370 288 344 C388 307 466 347 570 310" fill="none" stroke="#d4eadb" opacity=".11" stroke-width="24" filter="url(#blur)"/>
+  <text x="32" y="46" fill="#e4f1e9" font-family="system-ui" font-size="18" letter-spacing="3">SILHOUETTE STUDY A</text>
+</svg>

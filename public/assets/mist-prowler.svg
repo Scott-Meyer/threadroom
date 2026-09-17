@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 460" role="img" aria-labelledby="title desc">
+  <title id="title">The Prowler</title><desc id="desc">A wide crouched mist creature with forward-reaching limbs</desc>
+  <defs><radialGradient id="bg" cx="48%" cy="58%" r="82%"><stop stop-color="#3d4d4a"/><stop offset="1" stop-color="#10191e"/></radialGradient><filter id="blur"><feGaussianBlur stdDeviation="15"/></filter></defs>
+  <rect width="640" height="460" fill="url(#bg)"/><circle cx="138" cy="96" r="105" fill="#d8bc83" opacity=".07"/>
+  <g fill="#101b1d" stroke="#b8d2bd" stroke-linejoin="round">
+    <path d="M176 278 C218 181 350 160 430 221 C466 248 488 292 477 320 C425 292 377 289 334 304 C272 327 217 320 176 278Z" stroke-width="4"/>
+    <path d="M204 287 C159 302 119 342 78 406 C149 379 207 350 263 315Z" stroke-width="8"/>
+    <path d="M389 291 C454 303 512 339 581 402 C500 378 434 355 347 317Z" stroke-width="8"/>
+    <path d="M411 222 C444 170 470 128 474 76 C513 143 516 203 481 257Z" stroke-width="3"/>
+  </g>
+  <path d="M156 285 C254 181 393 167 486 278" fill="none" stroke="#b7d7c2" stroke-width="42" opacity=".13" filter="url(#blur)"/>
+  <g fill="#f0f7d8"><circle cx="417" cy="231" r="6"/><circle cx="442" cy="239" r="4"/></g>
+  <g fill="none" stroke="#98bfa9" opacity=".38" stroke-linecap="round"><path d="M185 240 C133 218 97 230 56 261" stroke-width="12"/><path d="M228 206 C169 157 116 163 66 182" stroke-width="7"/><path d="M475 286 C532 278 566 296 609 332" stroke-width="9"/></g>
+  <text x="32" y="46" fill="#e4f1e9" font-family="system-ui" font-size="18" letter-spacing="3">SILHOUETTE STUDY B</text>
+</svg>

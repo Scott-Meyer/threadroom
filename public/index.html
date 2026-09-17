@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f3ee">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='none' stroke='%23315d49' stroke-width='3'/%3E%3Cpath d='M8 16h16M16 8v16' stroke='%23315d49' stroke-width='2'/%3E%3C/svg%3E">
+  <title>Threadroom</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Threadroom home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Threadroom</span>
+      </a>
+      <div class="topbar-center"><span class="live-dot"></span> Conversations stay here when the session ends <span class="spike-label">LOCAL SPIKE</span></div>
+      <div class="topbar-actions">
+        <button class="icon-button" id="refreshButton" title="Refresh" aria-label="Refresh threads">↻</button>
+        <button class="button button-dark" id="newThreadButton"><span>＋</span> New review</button>
+        <div class="avatar" title="Scott">SM</div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <nav aria-label="Thread views">
+          <p class="nav-label">Workspace</p>
+          <button class="nav-item active" data-view="needs-answer"><span class="nav-icon">◇</span><span>Needs your answer</span><b id="needsCount">0</b></button>
+          <button class="nav-item" data-view="waiting-on-team"><span class="nav-icon">↗</span><span>Waiting on team</span><b id="teamCount">0</b></button>
+          <button class="nav-item" data-view="deferred"><span class="nav-icon">◷</span><span>Deferred</span><b id="deferredCount">0</b></button>
+          <button class="nav-item" data-view="history"><span class="nav-icon">≡</span><span>All history</span></button>
+        </nav>
+        <div class="project-nav">
+          <p class="nav-label">Projects</p>
+          <div id="projectList"></div>
+        </div>
+        <footer class="sidebar-footer">
+          <span class="persistence-icon">▣</span>
+          <span><strong>Saved locally</strong><small>SQLite · API connected</small></span>
+          <span class="status-light"></span>
+        </footer>
+      </aside>
+
+      <section class="thread-index" aria-label="Thread list">
+        <div class="index-heading">
+          <div><p class="eyebrow" id="viewEyebrow">INBOX</p><h1 id="viewTitle">Needs your answer</h1></div>
+          <span class="filter-button" title="Filter by project using the sidebar" aria-hidden="true">⌁</span>
+        </div>
+        <label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="Search threads" aria-label="Search threads" autocomplete="off"></label>
+        <div class="thread-list" id="threadList"><div class="loading-card"></div><div class="loading-card"></div></div>
+      </section>
+
+      <section class="thread-room" id="threadRoom" aria-live="polite">
+        <div class="thread-loading"><span class="spinner"></span> Opening the conversation…</div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="newThreadDialog">
+    <form method="dialog" class="dialog-card" id="newThreadForm">
+      <div class="dialog-heading"><div><p class="eyebrow">PUBLISH THROUGH THE API</p><h2>Start a new review</h2></div><button class="dialog-close" value="cancel" formnovalidate aria-label="Close">×</button></div>
+      <p class="dialog-copy">A simple authoring path for the spike. AI teammates use the same public endpoint.</p>
+      <label>Project<input name="project" value="MistFall" required></label>
+      <label>Thread title<input name="title" placeholder="e.g. Lantern interaction direction" required></label>
+      <label>Question<textarea name="prompt" rows="3" placeholder="What do you want Scott to consider?" required></textarea></label>
+      <label>Context<textarea name="context" rows="3" placeholder="Why this matters, constraints, or what changed"></textarea></label>
+      <div class="dialog-actions"><button class="button button-ghost" value="cancel" formnovalidate>Cancel</button><button class="button button-dark" value="default" id="publishThreadButton">Publish review</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="followupDialog">
+    <form method="dialog" class="dialog-card" id="followupForm">
+      <div class="dialog-heading"><div><p class="eyebrow">SAME THREAD, NEW QUESTION</p><h2>Add a follow-up</h2></div><button class="dialog-close" value="cancel" formnovalidate aria-label="Close">×</button></div>
+      <p class="dialog-copy">The earlier presentation and response remain unchanged. This question gets its own answer state.</p>
+      <label>Question<textarea name="prompt" rows="3" placeholder="What should happen next?" required></textarea></label>
+      <label>Context<textarea name="context" rows="3" placeholder="Optional context for this follow-up"></textarea></label>
+      <div class="dialog-actions"><button class="button button-ghost" value="cancel" formnovalidate>Cancel</button><button class="button button-dark" value="default">Add to thread</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+</body>
+</html>

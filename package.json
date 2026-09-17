@@ -1,0 +1,15 @@
+{
+  "name": "threadroom",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable asynchronous questions and visual reviews for people and AI teammates",
+  "scripts": {
+    "dev": "node --watch src/main.js",
+    "start": "node src/main.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

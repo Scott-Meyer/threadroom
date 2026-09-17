@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 460" role="img" aria-labelledby="title desc">
+  <title id="title">The Bloom</title><desc id="desc">A radial mist creature opening like a many-petaled flower</desc>
+  <defs><radialGradient id="bg"><stop stop-color="#34423f"/><stop offset="1" stop-color="#10191e"/></radialGradient><filter id="glow"><feGaussianBlur stdDeviation="10"/></filter></defs>
+  <rect width="640" height="460" fill="url(#bg)"/>
+  <g transform="translate(334 253)" fill="#122021" stroke="#bad9c7" stroke-width="3">
+    <path d="M0 0 C-45 -53 -66 -122 -24 -181 C-8 -126 35 -87 0 0Z"/>
+    <path d="M0 0 C28 -64 81 -113 151 -105 C113 -63 101 -6 0 0Z"/>
+    <path d="M0 0 C69 -5 138 17 160 83 C105 65 52 86 0 0Z"/>
+    <path d="M0 0 C44 54 63 124 18 180 C4 124 -37 83 0 0Z"/>
+    <path d="M0 0 C-29 64 -84 111 -153 100 C-113 60 -99 2 0 0Z"/>
+    <path d="M0 0 C-69 3 -137 -21 -156 -88 C-102 -68 -48 -88 0 0Z"/>
+    <circle r="54" fill="#172728"/><circle r="18" fill="#a8cdb8" opacity=".8"/>
+  </g>
+  <circle cx="334" cy="253" r="108" fill="none" stroke="#bbd7c3" stroke-width="35" opacity=".09" filter="url(#glow)"/>
+  <g fill="#dcebdd" opacity=".35"><circle cx="120" cy="318" r="3"/><circle cx="178" cy="112" r="5"/><circle cx="531" cy="182" r="4"/><circle cx="554" cy="356" r="3"/><circle cx="80" cy="217" r="2"/></g>
+  <text x="32" y="46" fill="#e4f1e9" font-family="system-ui" font-size="18" letter-spacing="3">SILHOUETTE STUDY C</text>
+</svg>
