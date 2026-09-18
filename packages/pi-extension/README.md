@@ -1,16 +1,20 @@
 # Native asking and optional Threadroom for Pi
 
-Keep everyday questions in Pi, and bring a shared discussion to Threadroom when it should outlive this seat. The installed native questionnaire still supplies the familiar blocking `ask_user_question`. This package adds private nonblocking asks and an explicit shared lane; it is an unreleased local beta, not an implicit replacement or service installation.
+Keep everyday questions in Pi, and bring a discussion to Threadroom when it should be shared and outlive this seat. This package owns both blocking `ask_user_question` and nonblocking `ask_user_question_async`, using one flat input-area surface. It is a fresh SDK implementation, not a fork or dependency of another questionnaire, and remains an unreleased local beta.
 
-## Private nonblocking asks
+## Private questions
 
-`ask_user_question_async` brings a private question into Pi’s normal input area automatically, while the AI continues working. Nonblocking describes the AI’s turn—not a hidden inbox the person has to discover. Written context and suggestions/previews are optional.
+Blocking questions take default priority and await only their own group. Nonblocking questions appear automatically while the AI continues working—not in a hidden inbox. Same-priority arrivals retain the current draft; suggestions stay visible during writing, and clearing the reply restores choice selection.
 
-Use ↑/↓ to select a visible suggestion and Enter to save it, Tab to edit it, or just type/paste a free reply. Shift+Tab switches pending questions without losing the current unsaved draft. Escape restores the chat editor and leaves the unanswered question prominently visible; `/asks [id]` reopens paused questions. Escape discards unsaved drafts, not the pending question. Other blocking Pi prompts temporarily take priority, then return focus to an open question; they do not reopen an explicitly paused one.
+Use the SDK select keys to choose/confirm, type or paste a free reply, and Tab/Shift+Tab to navigate question and group-review tabs. Blocking review supports partial submission, live checks, custom text and Alt+N notes; cancel affects only that group. Native async does not offer notes because its stored answer contract cannot retain them. Async previews are literal text; blocking previews support Markdown.
 
-Questions and answers are saved in the Pi transcript, not sent to the Threadroom API or its discoverable outline. Real submitted feedback retains its original prompt and stable answer identity, then steers a busy agent at a legal boundary or wakes an idle one. A closed Pi process cannot be woken by this extension; the original session can resume its saved questions and feedback. Copied/forked different-session transcripts do not inherit ownership. Native async currently requires interactive Pi TUI; RPC/print return an explicit unsupported-host result, not a human decline. Replies use a single-line input and previews are plain text.
+Escape pauses async questions without declining them or discarding their drafts; `/asks [id]` reopens pending questions. Collapse returns focus to the ordinary editor while retaining question drafts, on hosts with the public terminal-input hook needed to reopen there. Foreign prompts keep focus. Configured external-editor actions edit the original field and restore the TUI afterward.
 
-Saving feedback and accepting it into Pi's steering queue are not the same as a persisted model-message receipt. Process-local submission IDs survive extension reload because Pi may retain its agent queues; they are not durable receipt claims or another question store. Interrupted queues are not guessed at or blindly resent in the same runtime. `/asks` can show saved, unreceipted feedback and its stable identity; if delivery was interrupted, quit Pi and resume the original session to recover. Restart recovery is at-least-once, not a guarantee that subsequent AI work happens exactly once.
+Private prompts and answers remain in the original Pi session/branch, never Threadroom’s API or discoverable outline. Saved native feedback retains its original prompt and answer identity, then steers a busy agent at a legal boundary or wakes an idle one. A closed Pi cannot be woken by this extension, and copied/forked different-session histories do not inherit ownership. Native async requires interactive TUI. Blocking questions also support SDK RPC/ACP dialogs; unsupported hosts and aborts are not human declines.
+
+Saving an answer, queueing feedback and recording its consumption receipt are different outcomes. Process-local submission IDs prevent blind resend across extension reload; they are not durable receipts. Cold recovery can replay unreceipted feedback, so subsequent AI work is not exactly-once. `/asks` exposes pending questions, answer identities and recovery diagnostics—do not submit again to repair delivery.
+
+The SDK can mutate memory before a failed disk write. Native records then remain **storage unconfirmed**: further private writes/delivery are blocked on that manager/session, even after `/reload`. Feedback receipts require a complete physical session-file row; memory-only hosts make no disk assertion. A pre-append refusal without branch mutation remains retryable. Recover the original journal and preserve/copy drafts before replacing the process; do not quit/resume as a storage-error feedback retry. This guard is not SDK journal rollback or repair.
 
 ## Optional shared discussions
 
@@ -24,7 +28,9 @@ Native async needs no API or website. Shared Threadroom tools need the independe
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 ```
 
-That isolates the trial from existing extensions. For a normal installation, `pi install ./packages/pi-extension` works alongside `@juicesharp/rpiv-ask-user-question`: Threadroom uses `threadroom_ask`, leaving the existing blocking `ask_user_question` alone. Installation does not start the service. The packed package contains only this adapter, not the website, database, or reference source.
+That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question` or `ask_user_question_async`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "extensions": [] }` can disable that inherited producer without changing global settings. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
+
+Installation does not start the service. The packed package contains this adapter and its owned question modules, not the website, database, or historical reference source.
 
 Configuration uses environment variables:
 

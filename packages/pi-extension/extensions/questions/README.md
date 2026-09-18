@@ -6,7 +6,7 @@ This is a fresh implementation. The existing questionnaire informed the experien
 
 ## Explicit composition
 
-`registerPrivateQuestions(pi)` registers our blocking `ask_user_question` and nonblocking `ask_user_question_async` once. It does not install resources or connect to Threadroom. The current package MAIN has not been switched to this composition; loading it alongside another producer with the same name would be duplicate wiring.
+`registerPrivateQuestions(pi)` registers our blocking `ask_user_question` and nonblocking `ask_user_question_async` once. It does not install resources or connect to Threadroom. The package MAIN uses this composition; loading it alongside another producer with the same name would be duplicate wiring. Preparing that entry point does not reload or change the resources of a running Pi session.
 
 Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane.
 

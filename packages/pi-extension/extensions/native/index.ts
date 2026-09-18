@@ -388,7 +388,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   }
 
   pi.registerCommand('asks', {
-    description: 'Reopen this session’s paused private questions. Esc restores the editor; the question stays visible and pending, and unsaved drafts are discarded.',
+    description: 'Reopen this session’s pending private questions.',
     async handler(args, ctx) {
       if (ctx.mode !== 'tui') { ctx.ui.notify('Private asks require interactive Pi TUI.', 'warning'); return; }
       if (!context) bind(ctx);

@@ -3,14 +3,14 @@ import { Type } from 'typebox';
 import { ThreadroomClient } from '../src/client.js';
 import { Participation } from '../src/participation.js';
 import { renderAskCall, renderDiscussionCall, renderToolResult, renderFeedback, participationNotice } from './presentation/renderers.ts';
-import { registerNativeAsks } from './native/index.ts';
+import { registerPrivateQuestions } from './questions/index.ts';
 
 const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
 
 export default function threadroom(pi: ExtensionAPI) {
-  registerNativeAsks(pi);
-  // Shared questions are a deliberate extra, never a takeover of native asks.
+  registerPrivateQuestions(pi);
+  // Ordinary asks remain private; Threadroom is a deliberate shared extra.
   const askToolName = 'threadroom_ask';
   pi.registerMessageRenderer(ACTIVITY, renderFeedback);
   let room: Participation | undefined;
