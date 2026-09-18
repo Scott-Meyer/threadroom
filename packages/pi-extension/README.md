@@ -1,12 +1,22 @@
-# Threadroom for Pi
+# Native asking and optional Threadroom for Pi
 
-Bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
+Keep everyday questions in Pi, and bring a shared discussion to Threadroom when it should outlive this seat. The installed native questionnaire still supplies the familiar blocking `ask_user_question`. This package adds private nonblocking asks and an explicit shared lane; it is an unreleased local beta, not an implicit replacement or service installation.
 
-Threadroom is the optional shared, longer-lived asking lane. The first-release direction keeps ordinary blocking and non-blocking asks in Pi, local to its transcript and outside the Threadroom API/discoverable outline. Native async asking is not implemented here yet. This is a working local spike, not a released replacement for your installed questionnaire.
+## Private nonblocking asks
+
+`ask_user_question_async` leaves one question in the current Pi session/branch and returns immediately. Written context and suggested answers/previews are optional. Creation does not open a modal or steal editor focus. The person opens `/asks` to answer freely or use/edit a suggestion. Escape closes the UI without answering; the question stays pending and unsaved drafts are discarded.
+
+Questions and answers are saved in the Pi transcript, not sent to the Threadroom API or its discoverable outline. Real submitted feedback retains its original prompt and stable answer identity, then steers a busy agent at a legal boundary or wakes an idle one. A closed Pi process cannot be woken by this extension; the original session can resume its saved questions and feedback. Copied/forked different-session transcripts do not inherit ownership. Native async currently requires interactive Pi TUI; RPC/print return an explicit unsupported-host result, not a human decline. Replies use a single-line input and previews are plain text.
+
+Saving feedback and accepting it into Pi's steering queue are not the same as a persisted model-message receipt. Process-local submission IDs survive extension reload because Pi may retain its agent queues; they are not durable receipt claims or another question store. Interrupted queues are not guessed at or blindly resent in the same runtime. `/asks` can show saved, unreceipted feedback and its stable identity; if delivery was interrupted, quit Pi and resume the original session to recover. Restart recovery is at-least-once, not a guarantee that subsequent AI work happens exactly once.
+
+## Optional shared discussions
+
+Threadroom can bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
 ## Try it
 
-Run the independent Threadroom API and website first. From this repository, load the extension explicitly:
+Native async needs no API or website. Shared Threadroom tools need the independent API and website running. From this repository, load the extension explicitly:
 
 ```sh
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts

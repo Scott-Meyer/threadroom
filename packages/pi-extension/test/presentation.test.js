@@ -69,11 +69,11 @@ async function fixture(t, { staleApiAlias = false } = {}) {
     getSessionName: () => 'Motion teammate', appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
     sendMessage: (message, options) => messages.push({ message, options }),
   });
-  const ctx = { sessionManager: { getSessionId: () => 'presentation-session', getBranch: () => branch },
+  const ctx = { mode: 'rpc', hasUI: true, sessionManager: { getSessionId: () => 'presentation-session', getBranch: () => branch },
     isIdle: () => true, ui: { setStatus() {}, notify: (text) => notices.push(text) } };
-  await extension.handlers.get('session_start')[0]({}, ctx);
+  for (const handler of extension.handlers.get('session_start')) await handler({}, ctx);
   t.after(async () => {
-    await extension.handlers.get('session_shutdown')[0]({}, ctx);
+    for (const handler of extension.handlers.get('session_shutdown')) await handler({}, ctx);
     for (const [name, value] of Object.entries(before)) {
       const key = { api: 'THREADROOM_API_URL', ui: 'THREADROOM_UI_URL', replace: 'THREADROOM_REPLACE_ASK' }[name];
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -115,14 +115,14 @@ const options = { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT for 
 
 test('a retired API takeover setting cannot claim the native ask name', options, async (t) => {
   const f = await fixture(t, { staleApiAlias: true });
-  assert.deepEqual([...f.extension.tools.keys()], ['threadroom_ask', 'threadroom']);
+  assert.deepEqual([...f.extension.tools.keys()], ['ask_user_question_async', 'threadroom_ask', 'threadroom']);
   assert.equal(f.extension.tools.has('ask_user_question'), false);
 });
 
 test('Pi loads the adapter and renders expressive calls, durable results and saved feedback without changing receipts', options, async (t) => {
   const f = await fixture(t);
   const ask = f.extension.tools.get('threadroom_ask').definition;
-  assert.deepEqual([...f.extension.tools.keys()], ['threadroom_ask', 'threadroom']);
+  assert.deepEqual([...f.extension.tools.keys()], ['ask_user_question_async', 'threadroom_ask', 'threadroom']);
   const source = '<script>const SOURCE_ONLY_MARKER = "private authored program";</script>'.repeat(2000);
   const params = { question: 'How should this motion feel?', html: source, fallback: 'A study with quiet center and restless edges.' };
   const call = f.row('threadroom_ask', params);
