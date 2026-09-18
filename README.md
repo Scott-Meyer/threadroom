@@ -53,6 +53,12 @@ Useful configuration:
 
 The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. The current host still needs to be awake and both chosen processes need to run.
 
+## Independent service package — optional
+
+`npm pack --workspace threadroom-service` produces a private Node 24+ bundle of the API, website, and their resources—without Pi, a checkout database, or runtime dependencies. [Service instructions](packages/service/README.md) explain stable per-user storage, explicit database/URL selection, and review-only macOS supervisor configuration.
+
+Run it from an independent terminal or a separately approved supervisor, not a Pi-owned background task: Pi reload/shutdown terminates those tasks. Nothing has been installed or activated, and the existing checkout database is not automatically copied or adopted. Threadroom remains an explicit optional discussion lane, not a prerequisite for native Pi asking.
+
 ## Pi integration — local spike
 
 The independent [`packages/pi-extension`](packages/pi-extension/README.md) workspace now exposes expressive questions and ordinary thread participation to Pi. Public-boundary checks cover asynchronous publication, optional waiting/cancellation, saved response provenance, replay/restart recovery, and bounded readable receipts. The real Pi loader accepts both source and packed distribution. An actual Pi RPC/Gemini session published an authored comparison, continued independently, went idle, woke on saved automated feedback, and persisted the correlated reply in its transcript. The adapter consumes the HTTP API, not the database or website; service/UI remain independent.

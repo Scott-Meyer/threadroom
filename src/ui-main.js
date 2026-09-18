@@ -11,4 +11,4 @@ const server = createServer((request, response) => {
     response.end('Website error');
   });
 });
-server.listen(port, '127.0.0.1', () => console.log(`Independent Threadroom UI: http://127.0.0.1:${port} · API: ${apiBaseUrl}`));
+server.listen(port, '127.0.0.1', () => console.log(`Independent Threadroom UI: http://127.0.0.1:${server.address().port} · API: ${apiBaseUrl}`));

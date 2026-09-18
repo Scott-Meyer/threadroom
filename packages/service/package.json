@@ -1,0 +1,15 @@
+{
+  "name": "threadroom-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent local Threadroom API and website service",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "bin": { "threadroom-service": "bin/threadroom-service.js" },
+  "files": ["bin/", "lib/", "dist/", "README.md"],
+  "scripts": {
+    "build": "node scripts/build.js",
+    "prepack": "npm run build",
+    "test": "node --test test/*.test.js"
+  }
+}

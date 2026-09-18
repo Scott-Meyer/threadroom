@@ -7,7 +7,7 @@ const port = Number(process.env.PORT || 4310);
 const host = process.env.HOST || '127.0.0.1';
 const database = resolve(process.env.THREADROOM_DB || 'data/threadroom.sqlite');
 const store = new ThreadStore(database);
-store.seedDemo();
+if (process.env.THREADROOM_SEED_DEMO !== '0') store.seedDemo();
 
 const allowedOrigins = (process.env.THREADROOM_UI_ORIGINS || 'http://127.0.0.1:4311,http://localhost:4311').split(',').map((origin) => origin.trim()).filter(Boolean);
 const server = createThreadroomServer(store, {
@@ -15,7 +15,7 @@ const server = createThreadroomServer(store, {
   websiteHandler: process.env.THREADROOM_SERVE_UI === '0' ? null : createWebsiteHandler()
 });
 server.listen(port, host, () => {
-  console.log(`Threadroom ${process.env.THREADROOM_SERVE_UI === '0' ? 'API' : 'API + optional website'} is ready at http://${host}:${port}`);
+  console.log(`Threadroom ${process.env.THREADROOM_SERVE_UI === '0' ? 'API' : 'API + optional website'} is ready at http://${host}:${server.address().port}`);
   console.log(`Durable records: ${database}`);
 });
 
