@@ -2,6 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { Type } from 'typebox';
 import { createHash, randomUUID } from 'node:crypto';
 import { AskPanel, pendingCard, card, plain, type Feedback } from './ui.ts';
+import type { NativeQuestionPresentation, NativeQuestionSource, NativeSavedAnswer } from './presentation.ts';
+import { createReceiptJournal } from './receipt.ts';
 
 const QUESTION = 'threadroom.native.question.v1';
 const ANSWER = 'threadroom.native.answer.v1';
@@ -21,13 +23,44 @@ function submissions(manager: object, sessionId: string) {
   return ids;
 }
 
+// SDK append can mutate its branch before a failed disk write. These IDs are
+// uncertainty exclusions, never saved data or receipts. Reload cannot make the
+// same manager's failed append authoritative.
+const STORAGE = Symbol.for('threadroom.native.storage-unconfirmed.v1');
+const uncertain: WeakMap<object, Map<string, Set<string>>> = (globalThis as any)[STORAGE] ??= new WeakMap();
+function unconfirmed(ctx: ExtensionContext) {
+  const manager = ctx.sessionManager, sessionId = manager.getSessionId();
+  let sessions = uncertain.get(manager); if (!sessions) { sessions = new Map(); uncertain.set(manager, sessions); }
+  let ids = sessions.get(sessionId); if (!ids) { ids = new Set(); sessions.set(sessionId, ids); }
+  return ids;
+}
+function storageFailure(cause?: unknown, anchor?: string | null) {
+  return Object.assign(new Error(`Private storage is unconfirmed; no new private feedback will be sent. Draft retained. Recover the original SDK journal before continuing; /reload is not storage recovery. Preserve/copy retained drafts before any process replacement. Do not quit/resume as a feedback retry: feedback may have been consumed without a durable receipt.${anchor ? ` Last prior branch entry: ${anchor}.` : ''}${cause ? ` Cause: ${plain(cause)}` : ''}`), { code: 'storage_unconfirmed' });
+}
+
+// An overlay can retain an unmounted widget as preFocus. Share only current
+// UI ownership across closure reload, never questions or durable receipts.
+const FOCUS = Symbol.for('pi.private-question.focus.v1');
+const focusOwners: WeakMap<object, { handoff(data: string, editor: any): void }> =
+  (globalThis as any)[FOCUS] ??= new WeakMap();
+
+function mountedEditor(tui: any, preferred: any, fallback?: any) {
+  const mounted = new Set<any>(), queue = [...(tui.children || [])];
+  while (queue.length) {
+    const item = queue.pop(); if (!item || mounted.has(item)) continue;
+    mounted.add(item); if (Array.isArray(item.children)) queue.push(...item.children);
+  }
+  const editor = (item: any) => mounted.has(item) && typeof item?.getText === 'function' && typeof item?.setText === 'function';
+  return editor(preferred) ? preferred : editor(fallback) ? fallback : [...mounted].find(editor);
+}
+
 type Prompt = { question: string; context?: string; options?: { label: string; preview?: string }[] };
 type Question = { sessionId: string; id: string; toolCallId: string; prompt: Prompt };
 type Answer = { sessionId: string; answerId: string; questionId: string; prompt: Prompt;
   answer: { text: string; optionIndex?: number; selection?: { label: string; preview?: string } } };
 
 /** Native/private asks have no service dependency and do not claim the blocking ask name. */
-export function registerNativeAsks(pi: ExtensionAPI) {
+export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: NativeQuestionPresentation } = {}) {
   let context: ExtensionContext | undefined;
   let epoch = 0;
   let paused = false;
@@ -36,6 +69,36 @@ export function registerNativeAsks(pi: ExtensionAPI) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let reopenWhenIdle = false;
   let open: { epoch: number; close?: () => void; panel?: AskPanel; yield?: () => void; focus?: () => void } | undefined;
+  const receiptJournal = createReceiptJournal();
+  let source: NativeQuestionSource | undefined;
+  let projectionError: string | undefined, displayError: string | undefined;
+  function presentationFailed(ctx: ExtensionContext, error: unknown, phase: 'projection' | 'display') {
+    const message = plain(error); if (phase === 'projection') projectionError = message; else displayError = message;
+    try { ctx.ui.notify(`Private question presentation failed: ${message}. Saved questions remain pending; /asks retries.`, 'error'); } catch {}
+  }
+  function append(ctx: ExtensionContext, type: string, data: any) {
+    const blocked = unconfirmed(ctx); if (blocked.size) throw storageFailure();
+    const prior = new Set(ctx.sessionManager.getBranch().map((entry) => entry.id)), anchor = ctx.sessionManager.getLeafId?.();
+    try { pi.appendEntry(type, data); }
+    catch (error) {
+      for (const entry of ctx.sessionManager.getBranch()) if (!prior.has(entry.id)) blocked.add(entry.id);
+      if (blocked.size) throw storageFailure(error, anchor);
+      throw error; // A preappend refusal has not poisoned the SDK branch.
+    }
+  }
+  function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number }): NativeSavedAnswer {
+    if (!active(ctx, mine)) throw new Error('Original private question activation is detached.');
+    const state = project(ctx), question = state.questions.get(reply.questionId);
+    if (!question || state.answers.has(reply.questionId)) throw new Error('Original question is not pending on this branch.');
+    const selection = reply.optionIndex === undefined ? undefined : question.prompt.options?.[reply.optionIndex];
+    if (reply.optionIndex !== undefined && (!Number.isInteger(reply.optionIndex) || !selection)) throw new Error('Invalid original option index.');
+    const text = plain(reply.text).replace(/\s+/gu, ' ').trim(); if (!text) throw new Error('Reply must not be empty.');
+    const answer: Answer = { sessionId: state.sessionId, answerId: `answer-${randomUUID()}`, questionId: question.id, prompt: question.prompt,
+      answer: { text, ...(selection ? { optionIndex: reply.optionIndex, selection } : {}) } };
+    append(ctx, ANSWER, answer);
+    if (project(ctx).answers.get(question.id)?.answerId !== answer.answerId) throw new Error('Host did not save the answer entry.');
+    return { sessionId: state.sessionId, questionId: question.id, answerId: answer.answerId };
+  }
   let hostPrompt = false;
   let submitted = new Set<string>();
 
@@ -44,18 +107,21 @@ export function registerNativeAsks(pi: ExtensionAPI) {
     const questions = new Map<string, Question>();
     const answers = new Map<string, Answer>();
     const received = new Set<string>();
+    const blocked = unconfirmed(ctx), diskReceipts = receiptJournal(ctx.sessionManager);
     for (const entry of ctx.sessionManager.getBranch() as any[]) {
+      if (blocked.has(entry.id)) continue;
       if (entry.type === 'custom' && entry.data?.sessionId === sessionId) {
         if (entry.customType === QUESTION) questions.set(entry.data.id, entry.data);
         if (entry.customType === ANSWER) answers.set(entry.data.questionId, entry.data);
       }
       if (entry.type === 'custom_message' && entry.customType === FEEDBACK && entry.details?.sessionId === sessionId) {
+        if (diskReceipts && !diskReceipts.has(entry.id)) { blocked.add(entry.id); continue; }
         received.add(entry.details.answerId);
       }
     }
     // An answer is meaningful only with its original question on this branch.
     for (const id of answers.keys()) if (!questions.has(id)) answers.delete(id);
-    return { sessionId, questions, answers, received,
+    return { sessionId, questions, answers, received, storageUnconfirmed: blocked.size > 0,
       pending: [...questions.values()].filter((question) => !answers.has(question.id)) };
   }
   function sameSession(ctx: ExtensionContext) {
@@ -69,19 +135,38 @@ export function registerNativeAsks(pi: ExtensionAPI) {
     const state = project(ctx);
     for (const id of state.received) submitted.delete(id);
     const waiting = [...state.answers.values()].filter((answer) => !state.received.has(answer.answerId)).length;
-    ctx.ui.setStatus('native-asks', state.pending.length || waiting
-      ? `Asks: ${state.pending.length} pending${waiting ? ` · ${waiting} saved feedback` : ''} · /asks` : undefined);
-    if (open && !state.pending.length) {
-      const old = open; open = undefined; old.yield?.(); old.close?.();
-    } else open?.panel?.update(state.pending);
-    if (!open) ctx.ui.setWidget('native-asks', state.pending.length && active(ctx, epoch)
-      ? (tui, theme) => pendingCard(state.pending, tui, theme) : undefined);
+    try {
+      ctx.ui.setStatus('native-asks', state.storageUnconfirmed ? 'Private storage unconfirmed · recovery needed' : state.pending.length || waiting
+        ? `Asks: ${state.pending.length} pending${waiting ? ` · ${waiting} saved feedback` : ''} · /asks` : undefined);
+      if (options.presentation) {
+        if (active(ctx, epoch)) {
+          if (!source) {
+            const mine = epoch;
+            source = options.presentation.connect({ context: ctx, sessionId: state.sessionId, activation: mine, commit(reply) {
+              const saved = persistReply(ctx, mine, reply);
+              try { ambient(ctx); flush(ctx); } catch (error) { try { ctx.ui.notify(`Feedback saved (${saved.answerId}), but continuation failed: ${plain(error)}. No receipt claimed.`, 'error'); } catch {} }
+              return saved;
+            } });
+          }
+          source.replace(state.pending); projectionError = undefined;
+          if (!state.pending.length) displayError = undefined;
+        }
+        return;
+      }
+      if (open && !state.pending.length) {
+        const old = open; open = undefined; old.yield?.(); old.close?.();
+      } else open?.panel?.update(state.pending);
+      if (!open) ctx.ui.setWidget('native-asks', state.pending.length && active(ctx, epoch)
+        ? (tui, theme) => pendingCard(state.pending, tui, theme) : undefined);
+      projectionError = undefined;
+    } catch (error) { presentationFailed(ctx, error, 'projection'); }
   }
   function flush(ctx: ExtensionContext) {
     if (!active(ctx, epoch) || ctx.mode !== 'tui') return;
     // isIdle includes tree summarization/compaction, not only agent streaming.
     if (!running && !ctx.isIdle()) { resumeAfterBoundary(ctx, epoch); return; }
     const state = project(ctx);
+    if (state.storageUnconfirmed) { ambient(ctx); return; }
     for (const answer of state.answers.values()) {
       if (state.received.has(answer.answerId) || submitted.has(answer.answerId)) continue;
       submitted.add(answer.answerId); // In-flight only: never a persistence receipt.
@@ -97,10 +182,12 @@ export function registerNativeAsks(pi: ExtensionAPI) {
     ambient(ctx);
   }
   function invalidate() {
-    ++epoch;
+    ++epoch; projectionError = displayError = undefined;
+    const oldSource = source; source = undefined;
+    try { oldSource?.dispose(); } catch (error) { if (context) presentationFailed(context, error, 'projection'); }
     clearTimeout(timer); timer = undefined; reopenWhenIdle = false;
     const old = open; open = undefined; old?.yield?.(); old?.close?.();
-    if (context?.mode === 'tui') context.ui.setWidget('native-asks', undefined);
+    if (!options.presentation && context?.mode === 'tui') context.ui.setWidget('native-asks', undefined);
   }
   function bind(ctx: ExtensionContext) {
     invalidate();
@@ -157,9 +244,9 @@ export function registerNativeAsks(pi: ExtensionAPI) {
   });
 
   pi.registerEntryRenderer<Question>(QUESTION, (entry, _options, theme) =>
-    card(theme.fg('accent', 'Private ask saved') + ` · ${entry.data?.id}\n${entry.data?.prompt.question}\nPresented in the input area; /asks reopens paused questions (answers are saved separately)`));
+    card(theme.fg('accent', 'Private ask') + ` · ${entry.data?.id}\n${entry.data?.prompt.question}\nPresentation and storage status appear in Pi’s input area; /asks reopens questions.`));
   pi.registerEntryRenderer<Answer>(ANSWER, (entry) =>
-    card(`Private answer saved · ${entry.data?.answerId}\n${entry.data?.prompt.question}\n${entry.data?.answer.text}`));
+    card(`Private answer · ${entry.data?.answerId}\n${entry.data?.prompt.question}\n${entry.data?.answer.text}`));
   pi.registerMessageRenderer<Answer>(FEEDBACK, (message) =>
     card(`Private feedback · ${message.details?.questionId}\n${message.details?.prompt.question}\n${message.details?.answer.text}`));
 
@@ -177,7 +264,7 @@ export function registerNativeAsks(pi: ExtensionAPI) {
     }),
     renderCall(args) { return card(`Private async ask\n${args.question || ''}`); },
     renderResult(value) { return card(value.details?.status === 'pending'
-      ? `Pending private ask · ${value.details.id} · shown in input area` : `Private ask: ${value.details?.status || 'unavailable'}`); },
+      ? `Pending private ask · ${value.details.id} · /asks reopens` : `Private ask: ${value.details?.status || 'unavailable'}`); },
     async execute(toolCallId, params, signal, _update, ctx) {
       if (ctx.mode !== 'tui') return result({ status: 'unsupported_host', host: ctx.mode,
         reason: 'Native async asks require interactive Pi TUI; no question was saved.' });
@@ -195,14 +282,16 @@ export function registerNativeAsks(pi: ExtensionAPI) {
       const old = state.questions.get(id);
       if (old && JSON.stringify(old.prompt) !== JSON.stringify(prompt)) return result({ status: 'identity_conflict', id, saved: false });
       try {
-        if (!old) pi.appendEntry(QUESTION, { sessionId: state.sessionId, id, toolCallId, prompt });
+        if (state.storageUnconfirmed) throw storageFailure();
+        if (!old) append(ctx, QUESTION, { sessionId: state.sessionId, id, toolCallId, prompt });
         const saved = project(ctx);
         if (!saved.questions.has(id)) throw new Error('Host did not save the question entry.');
-        ambient(ctx);
-        if (!old) void present(ctx, id);
-        return result({ id, sessionId: state.sessionId, status: saved.answers.has(id) ? 'answered' : 'pending',
-          pending: saved.pending.map((question) => ({ id: question.id, question: question.prompt.question.slice(0, 160) })) });
-      } catch (error) { return result({ status: 'save_failed', id, error: plain(error) }); }
+      } catch (error) { return result({ status: (error as any)?.code === 'storage_unconfirmed' ? 'storage_unconfirmed' : 'save_failed', id, saved: false, error: plain(error) }); }
+      ambient(ctx); if (!old && !options.presentation) present(ctx, id);
+      const saved = project(ctx);
+      return result({ id, sessionId: state.sessionId, status: saved.answers.has(id) ? 'answered' : 'pending',
+        ...((projectionError || displayError) ? { presentationError: projectionError || displayError } : {}),
+        pending: saved.pending.map((question) => ({ id: question.id, question: question.prompt.question.slice(0, 160) })) });
     },
   });
 
@@ -212,6 +301,10 @@ export function registerNativeAsks(pi: ExtensionAPI) {
     if (!running && !ctx.isIdle()) { resumeAfterBoundary(ctx, epoch, true); return; }
     const state = project(ctx);
     if (!state.pending.length) return;
+    if (options.presentation) {
+      ambient(ctx); try { source?.reveal(initialId); if (source) displayError = undefined; } catch (error) { presentationFailed(ctx, error, 'display'); }
+      return;
+    }
     const mine = epoch;
     const opening: NonNullable<typeof open> = { epoch: mine };
     open = opening;
@@ -233,7 +326,7 @@ export function registerNativeAsks(pi: ExtensionAPI) {
                 const answer: Answer = { sessionId: current.sessionId, answerId: `answer-${randomUUID()}`,
                   questionId: question.id, prompt: question.prompt,
                   answer: { text: feedback.text, ...(selection ? { optionIndex: feedback.optionIndex, selection } : {}) } };
-                pi.appendEntry(ANSWER, answer); // Save prompt association + structured answer BEFORE wake.
+                append(ctx, ANSWER, answer); // Save prompt association + structured answer BEFORE wake.
                 if (project(ctx).answers.get(question.id)?.answerId !== answer.answerId) throw new Error('Host did not save the answer entry.');
               }
             } else ctx.ui.notify('Paused without answering. Question stays visible and pending; unsaved draft discarded. /asks reopens it.', 'info');
@@ -247,6 +340,22 @@ export function registerNativeAsks(pi: ExtensionAPI) {
         const panel = new AskPanel(state.pending, tui, theme, finish, initialId);
         panel.suspend(hostPrompt);
         opening.panel = panel;
+        const owner = { handoff(data: string, editor: any) {
+          if (!active(ctx, mine) || open !== opening) return;
+          const target = mountedEditor(tui, previous, editor);
+          tui.setFocus(target || null); opening.focus?.();
+          if (tui.getFocusedComponent() === panel) panel.handleInput(data);
+          else target?.handleInput?.(data);
+        } };
+        focusOwners.set(tui, owner);
+        panel.onRetire = () => { if (focusOwners.get(tui) === owner) focusOwners.delete(tui); };
+        panel.retiredInput = (data) => {
+          if (tui.getFocusedComponent() !== panel) return;
+          const successor = focusOwners.get(tui);
+          if (successor && successor !== owner) successor.handoff(data, previous);
+          else { const target = mountedEditor(tui, previous); tui.setFocus(target || null); target?.handleInput?.(data); }
+          tui.requestRender();
+        };
         opening.close = () => panel.close();
         opening.yield = () => {
           // Never restore over another prompt that has already taken focus.
@@ -271,11 +380,10 @@ export function registerNativeAsks(pi: ExtensionAPI) {
         queueMicrotask(() => opening.focus?.());
         return panel;
       }, { placement: 'aboveEditor' });
-      ambient(ctx);
+      ambient(ctx); displayError = undefined;
     } catch (error) {
       if (open === opening) { opening.yield?.(); open = undefined; }
-      ambient(ctx);
-      ctx.ui.notify(`Private question presentation failed: ${plain(error)}. The saved question remains in /asks.`, 'error');
+      ambient(ctx); presentationFailed(ctx, error, 'display');
     }
   }
 
@@ -285,8 +393,16 @@ export function registerNativeAsks(pi: ExtensionAPI) {
       if (ctx.mode !== 'tui') { ctx.ui.notify('Private asks require interactive Pi TUI.', 'warning'); return; }
       if (!context) bind(ctx);
       if (!active(ctx, epoch)) { ctx.ui.notify('Session is changing; reopen /asks when ready.', 'info'); return; }
-      if (open) { ctx.ui.notify('A private question is already open.', 'info'); return; }
       const state = project(ctx);
+      if (state.storageUnconfirmed) {
+        ambient(ctx); ctx.ui.notify(plain(storageFailure()), 'error');
+        if (!open && state.pending.length) {
+          const id = args.trim() || undefined;
+          if (!id || state.pending.some((question) => question.id === id)) present(ctx, id);
+        }
+        return;
+      }
+      if (open) { ctx.ui.notify('A private question is already open.', 'info'); return; }
       if (!state.pending.length) {
         ambient(ctx);
         const waiting = [...state.answers.values()].filter((answer) => !state.received.has(answer.answerId));

@@ -21,6 +21,8 @@ export class AskPanel {
   private closed = false;
   private suspended = false;
   beforeRender?: () => void;
+  onRetire?: () => void;
+  retiredInput?: (data: string) => void;
   private drafts = new Map<string, { input: Input; writing: boolean; option: number; scroll: number }>();
   private _focused = false;
   get focused() { return this._focused; }
@@ -32,7 +34,7 @@ export class AskPanel {
   }
   suspend(value: boolean) { if (value !== this.suspended) { this.suspended = value; this.tui.requestRender(); } }
   private submit(value: Feedback) { if (!this.closed) this.done(value); }
-  close(value?: Feedback) { if (!this.closed) { this.closed = true; this.done(value); } }
+  close(value?: Feedback) { if (!this.closed) { this.closed = true; this.onRetire?.(); this.done(value); } }
   private show(item: any) {
     if (this.input) this.input.focused = false;
     this.question = item;
@@ -65,7 +67,8 @@ export class AskPanel {
     this.focused = this._focused;
   }
   handleInput(data: string) {
-    if (this.closed || !this.question) return;
+    if (this.closed) { this.retiredInput?.(data); return; }
+    if (!this.question) return;
     const options = this.question.prompt.options || [];
     if (matchesKey(data, 'escape')) { this.close(); return; }
     if (matchesKey(data, 'shift+tab') && this.items.length > 1) this.next();
@@ -90,7 +93,8 @@ export class AskPanel {
       this.input.handleInput(data);
       const value = this.input.getValue(), safe = singleLine(value);
       if (safe !== value) this.input.setValue(safe);
-      if (!this.writing && safe.length) { this.writing = true; this.focused = this._focused; }
+      const writing = options.length ? safe.length > 0 : true;
+      if (writing !== this.writing) { this.writing = writing; this.focused = this._focused; }
     }
     this.tui.requestRender();
   }
@@ -117,31 +121,34 @@ export class AskPanel {
     const hint = this.writing
       ? 'Enter save reply' + (options.length ? ' · Tab choices' : '') + ' · Esc pause'
       : '↑/↓ choose · Enter save choice · Tab edit · Or type a reply · Esc pause';
-    const choiceLine = (i: number) => this.theme.fg(i === this.option ? 'accent' : 'text',
-      line(`${i === this.option ? '›' : ' '} ${i + 1}. ${i === options.length ? 'Type something.' : options[i].label}`));
+    const activeOption = this.writing ? options.length : this.option;
+    const choiceLine = (i: number) => this.theme.fg(i === activeOption ? 'accent' : 'text',
+      line(`${i === activeOption ? '›' : ' '} ${i + 1}. ${i === options.length ? 'Type something.' : options[i].label}`));
     if (budget <= 6) {
       this.pageSize = 1;
       this.scroll = Math.min(this.scroll, Math.max(0, body.length - 1));
+      const count = options.length ? Math.min(options.length + 1, Math.max(1, budget - 3 - input.length)) : 0;
+      const start = Math.max(0, Math.min(activeOption - Math.floor(count / 2), options.length + 1 - count));
       return [this.theme.fg('accent', line(title)), body[this.scroll],
-        ...(this.writing ? input : [choiceLine(this.option)]),
+        ...Array.from({ length: count }, (_, i) => choiceLine(start + i)), ...input,
         this.theme.fg('dim', line('PgUp/PgDn details · ' + hint))].slice(0, budget);
     }
     const room = budget - 4 - input.length;
-    const count = !this.writing && options.length ? Math.min(6, options.length + 1, Math.max(1, Math.floor(room / 2))) : 0;
+    const count = options.length ? Math.min(6, options.length + 1, Math.max(1, Math.floor(room / 2))) : 0;
     const height = Math.max(1, room - count - 1); // reserve the scroll hint too
     this.pageSize = height;
     this.scroll = Math.min(this.scroll, Math.max(0, body.length - height));
     const rows = [border, this.theme.fg('accent', line(title)), ...body.slice(this.scroll, this.scroll + height)];
     if (body.length > height) rows.push(this.theme.fg('dim', line(`PgUp/PgDn · details ${this.scroll + 1}–${Math.min(body.length, this.scroll + height)}/${body.length}`)));
     if (count) {
-      const start = Math.max(0, Math.min(this.option - Math.floor(count / 2), options.length + 1 - count));
+      const start = Math.max(0, Math.min(activeOption - Math.floor(count / 2), options.length + 1 - count));
       for (let i = start; i < start + count; i++) rows.push(choiceLine(i));
     }
     rows.push(...input, this.theme.fg('dim', line(hint)), border);
     return rows;
   }
   invalidate() { this.input.invalidate(); }
-  dispose() { this.closed = true; }
+  dispose() { this.closed = true; this.onRetire?.(); }
 }
 
 /** Escape restores the chat editor, but does not make the pending ask disappear. */

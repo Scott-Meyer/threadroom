@@ -194,7 +194,7 @@ test('native UI and saved transcript render untrusted text as data at actual Pi 
     }
   }
   assert.equal(entry.data.prompt.question, malicious, 'saved association is not silently rewritten by rendering');
-  dialog.component.handleInput('\x15'); dialog.component.handleInput('\t'); dialog.component.handleInput('\r'); await opening;
+  dialog.component.handleInput('\x15'); dialog.component.handleInput('\r'); await opening;
   const answer = f.entries('threadroom.native.answer.v1').at(-1).data.answer;
   assert.equal(answer.text, 'Quiet finish'); assert.equal(answer.selection.label, 'Quiet\nfinish');
 });
@@ -242,6 +242,23 @@ test('automatic input-area choices, free writing, pending visibility and concurr
   resumed.handleInput('My own wording'); resumed.handleInput('\r'); await reopened; await f.tick();
   assert.equal(f.dialogs.length, 3, 'saving advances in the same panel to the remaining question');
   assert.match(stripVTControlCharacters(f.dialogs.at(-1).component.render(80).join('\n')), /Another independent question\?/);
+});
+
+test('suggestions remain visible while typing and clearing a reply restores ordinary choice selection', options, async (t) => {
+  const f = await fixture(t);
+  await f.extension.tools.get('ask_user_question_async').definition.execute('visible-choices',
+    { question: 'Which finish?', options: ['Quiet', 'Bright'] }, undefined, () => {}, f.ctx());
+  const panel = f.dialogs[0].component;
+  f.tui.terminal.rows = 24;
+  const text = () => stripVTControlCharacters(panel.render(80).join('\n'));
+  panel.handleInput('Draft');
+  assert.match(text(), /1\. Quiet/); assert.match(text(), /2\. Bright/); assert.match(text(), /Draft/);
+  for (let i = 0; i < 5; i++) panel.handleInput('\x7f');
+  assert.match(text(), /› 1\. Quiet/);
+  panel.handleInput('\x1b[B');
+  assert.match(text(), /› 2\. Bright/);
+  panel.handleInput('\r'); await f.tick();
+  assert.equal(f.entries('threadroom.native.answer.v1')[0].data.answer.selection.label, 'Bright');
 });
 
 test('saving another pending question preserves the original free-answer draft', options, async (t) => {
@@ -392,6 +409,18 @@ test('selectors outside extension prompt spans retain focus, then automatically 
   const paused = f.widgets.at(-1)[1](f.tui, f.getTheme()); paused.render(80);
   assert.equal(f.tui.getFocusedComponent(), f.editor, 'a paused card never regains focus');
   assert.equal(f.dialogs.length, count);
+});
+
+test('actual TUI overlay restoration routes retired native focus to the editor or current session/reload owner', options, () => {
+  const result = spawnSync(process.execPath, [resolve(root, 'packages/pi-extension/fixtures/native-focus-proof.mjs'), root, sdk],
+    { encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
+  const proof = JSON.parse(result.stdout.trim());
+  assert.equal(proof.noSuccessorEditorKeyOnce, true);
+  assert.equal(proof.disposeBeforeShutdown, true);
+  assert.equal(proof.replacedEditorLoan, true);
+  assert.equal(proof.newSessionCurrentOwner, true);
+  assert.equal(proof.originalSessionReloadCurrentWriterAndSender, true);
 });
 
 test('installed Pi PTY: focus, streaming UI, wake, real saved receipt and resume', {
