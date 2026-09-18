@@ -18,13 +18,14 @@ Configuration uses environment variables:
 
 - `THREADROOM_API_URL`: defaults to `http://127.0.0.1:4310`.
 - `THREADROOM_UI_URL`: defaults to `http://127.0.0.1:4311`, or the configured API address when one is supplied. Set it separately for an independently hosted website.
-- `THREADROOM_REPLACE_ASK=1`: an experimental API-backed alias, not the native first-release default. It explicitly registers the rich tool as `ask_user_question` instead. Disable/remove the old questionnaire before choosing this mode; the input contract is different. Coexistence is the default for the first beta.
+
+The experimental `THREADROOM_REPLACE_ASK` API alias has been retired. Threadroom always uses its own tool names; a stale setting cannot redirect ordinary native asks into the shared service.
 
 The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
 ## Participation
 
-`threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. The optional replacement mode changes the old tool's input contract; it is not a drop-in questionnaire-schema emulator.
+`threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. It is a separate shared capability, not an emulator of the native questionnaire schema.
 
 `threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints; the adapter never starts the service.
 

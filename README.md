@@ -63,7 +63,7 @@ Run it from an independent terminal or a separately approved supervisor, not a P
 
 The independent [`packages/pi-extension`](packages/pi-extension/README.md) workspace now exposes expressive questions and ordinary thread participation to Pi. Public-boundary checks cover asynchronous publication, optional waiting/cancellation, saved response provenance, replay/restart recovery, and bounded readable receipts. The real Pi loader accepts both source and packed distribution. An actual Pi RPC/Gemini session published an authored comparison, continued independently, went idle, woke on saved automated feedback, and persisted the correlated reply in its transcript. The adapter consumes the HTTP API, not the database or website; service/UI remain independent.
 
-This is opt-in and unreleased. Its default `threadroom_ask` tool coexists with the existing blocking questionnaire. Optional replacement mode is an explicit choice with a different input contract; it is not a form-schema emulator. Authentication, evolving live presentations, FlightDeck, and an alternative terminal UI remain unfinished. `npm run pi:pack:check` inspects the standalone adapter distribution.
+This is opt-in and unreleased. Shared `threadroom_ask` coexists with the native blocking questionnaire; the experimental API takeover of the native ask name has been retired. First-release native asking stays Pi-local/private, with nonblocking native asks under development. Threadroom is the deliberate longer-lived extra, not an ordinary-ask prerequisite. Authentication, evolving live presentations, FlightDeck, and an alternative terminal UI remain unfinished. `npm run pi:pack:check` inspects the standalone adapter distribution.
 
 ## Evidence
 

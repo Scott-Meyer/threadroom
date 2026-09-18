@@ -8,7 +8,8 @@ const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
 
 export default function threadroom(pi: ExtensionAPI) {
-  const askToolName = process.env.THREADROOM_REPLACE_ASK === '1' ? 'ask_user_question' : 'threadroom_ask';
+  // Shared questions are a deliberate extra, never a takeover of native asks.
+  const askToolName = 'threadroom_ask';
   pi.registerMessageRenderer(ACTIVITY, renderFeedback);
   let room: Participation | undefined;
   let context: any;

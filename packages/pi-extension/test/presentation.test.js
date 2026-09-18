@@ -21,7 +21,7 @@ if (!sdk) {
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const host = async (path) => import(pathToFileURL(resolve(sdk, path)).href);
 
-async function fixture(t) {
+async function fixture(t, { staleApiAlias = false } = {}) {
   const directory = await mkdtemp(resolve(tmpdir(), 'threadroom-pi-presentation-'));
   const reservation = createServer();
   reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
@@ -56,7 +56,7 @@ async function fixture(t) {
   }), 3000);
   const before = { api: process.env.THREADROOM_API_URL, ui: process.env.THREADROOM_UI_URL, replace: process.env.THREADROOM_REPLACE_ASK };
   process.env.THREADROOM_API_URL = url; process.env.THREADROOM_UI_URL = url;
-  delete process.env.THREADROOM_REPLACE_ASK;
+  if (staleApiAlias) process.env.THREADROOM_REPLACE_ASK = '1'; else delete process.env.THREADROOM_REPLACE_ASK;
   const { discoverAndLoadExtensions } = await host('dist/core/extensions/loader.js');
   const loaded = await discoverAndLoadExtensions([resolve(root, 'packages/pi-extension/extensions')], root, '/nonexistent/threadroom-test-agent');
   assert.deepEqual(loaded.errors, []);
@@ -112,6 +112,12 @@ async function fixture(t) {
     setHyperlinks: (enabled) => setCapabilities({ ...previousCapabilities, hyperlinks: enabled }) };
 }
 const options = { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT for real host rendering' };
+
+test('a retired API takeover setting cannot claim the native ask name', options, async (t) => {
+  const f = await fixture(t, { staleApiAlias: true });
+  assert.deepEqual([...f.extension.tools.keys()], ['threadroom_ask', 'threadroom']);
+  assert.equal(f.extension.tools.has('ask_user_question'), false);
+});
 
 test('Pi loads the adapter and renders expressive calls, durable results and saved feedback without changing receipts', options, async (t) => {
   const f = await fixture(t);
