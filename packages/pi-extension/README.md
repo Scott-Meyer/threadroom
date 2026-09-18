@@ -12,18 +12,19 @@ Run the independent Threadroom API and website first. From this repository, load
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 ```
 
-That isolates the trial from existing extensions. For a normal installation, `pi install ./packages/pi-extension` works; disable/remove `@juicesharp/rpiv-ask-user-question` before enabling this package because both register `ask_user_question`. Installation does not start the service. The packed package contains only this adapter, not the website, database, or reference source.
+That isolates the trial from existing extensions. For a normal installation, `pi install ./packages/pi-extension` works alongside `@juicesharp/rpiv-ask-user-question`: Threadroom uses `threadroom_ask`, leaving the existing blocking `ask_user_question` alone. Installation does not start the service. The packed package contains only this adapter, not the website, database, or reference source.
 
 Configuration uses environment variables:
 
 - `THREADROOM_API_URL`: defaults to `http://127.0.0.1:4310`.
 - `THREADROOM_UI_URL`: defaults to `http://127.0.0.1:4311`, or the configured API address when one is supplied. Set it separately for an independently hosted website.
+- `THREADROOM_REPLACE_ASK=1`: explicitly register the rich tool as `ask_user_question` instead. Disable/remove the old questionnaire before choosing this mode; the input contract is different. Coexistence is the default for the first beta.
 
 The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
 ## Participation
 
-`ask_user_question` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. This changes the old tool's input contract; it is not a drop-in questionnaire-schema emulator.
+`threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. The optional replacement mode changes the old tool's input contract; it is not a drop-in questionnaire-schema emulator.
 
 `threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows connectivity and local participation.
 

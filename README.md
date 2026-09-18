@@ -55,7 +55,7 @@ The public browser client is `public/client.js`; it has no rendering or persiste
 
 The independent [`packages/pi-extension`](packages/pi-extension/README.md) workspace now exposes expressive questions and ordinary thread participation to Pi. Public-boundary checks cover asynchronous publication, optional waiting/cancellation, saved response provenance, replay/restart recovery, and bounded readable receipts. The real Pi loader accepts both source and packed distribution. An actual Pi RPC/Gemini session published an authored comparison, continued independently, went idle, woke on saved automated feedback, and persisted the correlated reply in its transcript. The adapter consumes the HTTP API, not the database or website; service/UI remain independent.
 
-This is opt-in and unreleased. It does not replace an installed questionnaire automatically, preserve that tool's old form schema, or complete authentication, evolving live presentations, FlightDeck, or an alternative terminal UI. `npm run pi:pack:check` inspects the standalone adapter distribution.
+This is opt-in and unreleased. Its default `threadroom_ask` tool coexists with the existing blocking questionnaire. Optional replacement mode is an explicit choice with a different input contract; it is not a form-schema emulator. Authentication, evolving live presentations, FlightDeck, and an alternative terminal UI remain unfinished. `npm run pi:pack:check` inspects the standalone adapter distribution.
 
 ## Evidence
 

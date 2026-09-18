@@ -7,6 +7,7 @@ const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
 
 export default function threadroom(pi: ExtensionAPI) {
+  const askToolName = process.env.THREADROOM_REPLACE_ASK === '1' ? 'ask_user_question' : 'threadroom_ask';
   let room: Participation | undefined;
   let context: any;
   let paused = false;
@@ -24,7 +25,7 @@ export default function threadroom(pi: ExtensionAPI) {
     return entries.flatMap((entry) => {
       if (entry.type === 'custom_message' && entry.customType === ACTIVITY) return entry.details?.receivedResponseIds || [];
       if (entry.type === 'message' && entry.message.role === 'toolResult' &&
-          ['ask_user_question', 'threadroom'].includes(entry.message.toolName)) {
+          ['threadroom_ask', 'ask_user_question', 'threadroom'].includes(entry.message.toolName)) {
         return entry.message.details?.receivedResponseIds || [];
       }
       return [];
@@ -117,7 +118,7 @@ export default function threadroom(pi: ExtensionAPI) {
     description: 'Wait up to this many milliseconds. Omit to continue immediately; timeout/cancel does not withdraw the question.' }));
 
   pi.registerTool({
-    name: 'ask_user_question', label: 'Ask in Threadroom',
+    name: askToolName, label: 'Ask in Threadroom',
     description: 'Bring the person a question or an interaction you designed. Threadroom saves it and its presentation, returns a durable address, and brings later replies into this session. Returns immediately unless you choose to wait. Authored HTML/JS runs in the service sandbox; its proposals are drafts, while the surrounding host owns saving an answer. Plain text and suggested choices are conveniences, not limits on what you can show.',
     parameters: Type.Object({
       question: Type.String({ description: 'What you want to discuss.' }),
