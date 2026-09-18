@@ -15,9 +15,13 @@ export default function(pi: any) {
       const saved: any[] = [];
       model.enqueue({ id: 'A', mode: 'async', questions: [question], commit: (id, answer) => { saved.push({ id, answer }); } });
       assert.doesNotMatch(view.frame(80).header[0], /\n/, 'authored headers cannot break a single-row tab strip');
+      assert.doesNotMatch(view.frame(80).lines.join('\n'), /\x1b\[7m/, 'an inactive reply field must not draw a caret while an authored choice is selected');
       const text = () => stripVTControlCharacters(view.frame(80).lines.join('\n'));
       for (const char of 'DRAFT') view.handleInput(char);
       assert.match(text(), /1\. Same/); assert.match(text(), /2\. Same/); assert.match(text(), /DRAFT/);
+      const replyRows = view.frame(80).lines.map((line) => stripVTControlCharacters(line));
+      assert.ok(replyRows.some((line) => /Reply:.*DRAFT/.test(line)), 'the selectable free reply is the actual inline typing field, not a separate action and field');
+      assert.doesNotMatch(replyRows.join('\n'), /Type something\./, 'no pseudo-option remains above a duplicate typing field');
       for (let index = 0; index < 5; index++) view.handleInput('\x7f');
       view.handleInput('\x1b[B'); assert.match(text(), /\*\*SECOND_LITERAL\*\*/);
       view.handleInput('\r'); await new Promise((done) => setImmediate(done));
@@ -25,6 +29,19 @@ export default function(pi: any) {
       const block = model.enqueue({ id: 'B', mode: 'blocking', questions: [{ ...question, id: 'b0' }, { ...question, id: 'b1', multiSelect: true }] });
       model.select('B', 'b1'); view.handleInput('\x1b[32u'); view.handleInput('\x1b[32;1:2u'); assert.deepEqual(model.current()!.checked, [0], 'Space repeat does not flip a checkbox'); view.handleInput('\x1b[B'); view.handleInput(' '); view.handleInput('\x1bn');
       for (const char of 'OPEN_NOTE') view.handleInput(char);
+      const noteFrame = view.frame(80).lines;
+      assert.doesNotMatch(noteFrame.find((line) => stripVTControlCharacters(line).includes('Reply:'))!, /\x1b\[7m/, 'editing notes cannot leave a second caret in the reply field');
+      assert.match(noteFrame.join('\n'), /\x1b\[7m/, 'the actual notes editor retains its SDK caret');
+      view.handleInput('\x1b[D'); // Put the caret before the final E, not at the default end.
+      view.focused = false;
+      const inactiveNotes = view.frame(80).lines.join('\n');
+      assert.doesNotMatch(inactiveNotes, /\x1b\[7m/, 'foreign focus must leave no fake reply or notes caret');
+      assert.match(stripVTControlCharacters(inactiveNotes), /OPEN_NOTE/, 'inactive notes remain inspectable without changing the draft');
+      view.focused = true;
+      assert.match(view.frame(80).lines.join('\n'), /\x1b\[7m/, 'restored notes keep the original SDK editor caret');
+      view.handleInput('X');
+      assert.equal(model.current()!.notes, 'OPEN_NOTXE', 'focus suspension preserves the original mid-text notes caret, not a reset-to-end editor');
+      view.handleInput('\x7f'); assert.equal(model.current()!.notes, 'OPEN_NOTE');
       view.handleInput('\r'); assert.equal(model.current()!.notes, 'OPEN_NOTE', 'notes submit retains the text supplied by SDK Editor');
       view.handleInput('\t'); assert.match(text(), /OPEN_NOTE/); assert.match(text(), /Submit answers/); assert.match(text(), /Cancel/);
       view.handleInput('\r'); const result = await block.outcome!; assert.equal(result.answers[0].notes, 'OPEN_NOTE'); assert.deepEqual(result.answers[0].optionIndices, [0, 1]);
@@ -86,10 +103,19 @@ export default function(pi: any) {
       noRaw.enqueue({ id: 'NO_RAW', mode: 'async', questions: [question], commit() {} }); await Promise.resolve(); widget.render(80);
       widget.handleInput('\x1d'); assert.doesNotMatch(widget.render(80).join('\n'), /Collapsed/, 'collapse is unavailable without an editor-level reopen hook');
       widget.handleInput('visible'); assert.equal(noRaw.snapshot().current!.reply, 'visible', 'unsupported collapse cannot swallow input into a hidden draft');
+      for (const [width, rows] of [[25, 24], [80, 18]]) {
+        noRawTui.terminal.rows = rows;
+        const boxed = widget.render(width).map((line: string) => stripVTControlCharacters(line));
+        assert.ok(boxed[0].startsWith('╭') && boxed[0].endsWith('╮'), 'question has an unmistakable top boundary');
+        assert.ok(boxed.at(-1).startsWith('╰') && boxed.at(-1).endsWith('╯'), 'question has an unmistakable bottom boundary');
+        assert.ok(boxed.slice(1, -1).every((line: string) => line.startsWith('│') && line.endsWith('│')), 'visible question rows remain inside the boundary');
+        assert.ok(boxed.every((line: string) => visibleWidth(line) <= width));
+        assert.ok(boxed.length <= Math.max(4, Math.min(20, rows - 12)), 'framing does not add rows outside the viewport budget');
+      }
       widget.handleInput('\x1b'); widget.handleInput('\x1b'); await Promise.resolve(); assert.equal(focus, ordinary, 'pause still restores the mounted ordinary editor');
       focus.handleInput('+'); assert.equal(ordinary.value, 'ORDINARY+'); noRaw.dispose();
       assert.ok(getKeybindings()); model.dispose(); view.dispose();
-      return { content: [{ type: 'text', text: 'Fresh SDK-owned question view passed' }], details: { syntheticNotScott: true, humanAcceptance: false, noQuestionnaireDependency: true, suggestionsVisible: true, clearRestoresChoices: true, duplicateIndexPlainPreview: true, reviewChecksAndOpenNotes: true, untrustedPasteSafe: true, boundedLineWidths: true, incarnationEditorHistorySafe: true, externalEditOriginalCellAndSafeText: true, collapseUnavailableWithoutReopenHook: true, physicalPty: false } };
+      return { content: [{ type: 'text', text: 'Fresh SDK-owned question view passed' }], details: { syntheticNotScott: true, humanAcceptance: false, noQuestionnaireDependency: true, suggestionsVisible: true, clearRestoresChoices: true, duplicateIndexPlainPreview: true, reviewChecksAndOpenNotes: true, untrustedPasteSafe: true, boundedLineWidths: true, incarnationEditorHistorySafe: true, externalEditOriginalCellAndSafeText: true, collapseUnavailableWithoutReopenHook: true, inlineReplyField: true, inactiveEditorsHaveNoFakeCaret: true, framedWithinViewportBudget: true, physicalPty: false } };
     },
   });
 }

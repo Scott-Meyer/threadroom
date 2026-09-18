@@ -1,4 +1,4 @@
-import { isKeyRelease, isKeyRepeat, matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import { isKeyRelease, isKeyRepeat, matchesKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { QuestionModel } from './model.ts';
 import { QuestionView } from './view.ts';
 import type { QuestionGroup } from './types.ts';
@@ -16,7 +16,7 @@ function mountedEditor(tui: any, preferred?: any, fallback?: any) {
 /** A session-owned editor loan, not an overlay or replacement editor.
  * Mount disposal retires focus; scope disposal also detaches outstanding groups. */
 export function createQuestionHost(context: any, options: { collapseKey?: string | false } = {}) {
-  let tui: any, view: QuestionView | undefined, previous: any, mounted = false, disposed = false, foreign = false;
+  let tui: any, palette: any, view: QuestionView | undefined, previous: any, mounted = false, disposed = false, foreign = false;
   let inspect = false, offset = 0, page = 1, shown: string | undefined, scheduled = false;
   const collapsed = new Set<string>(), widgetKey = 'private-question-surface';
   // A collapsed surface must loan focus back to the editor and reopen there.
@@ -61,11 +61,17 @@ export function createQuestionHost(context: any, options: { collapseKey?: string
       reconcile(); if (!view || !model.current()) return [];
       view.focused = tui.getFocusedComponent() === component;
       const current = model.current()!; if (shown !== displayKey()) { shown = displayKey(); inspect = false; offset = 0; }
-      const frame = view.frame(width, inspect), budget = Math.max(4, Math.min(20, tui.terminal.rows - 12));
-      if (isCollapsed()) return [frame.header[0], truncateToWidth(`Collapsed · ${collapseKey || '/asks'} reopens · draft retained`, width, ''), frame.footer];
+      const framed = width >= 4, innerWidth = framed ? width - 2 : width;
+      const frame = view.frame(innerWidth, inspect), budget = Math.max(4, Math.min(20, tui.terminal.rows - 12));
+      const box = (rows: string[]) => framed ? rows.map((line, index) => {
+        const top = index === 0, bottom = index === rows.length - 1, text = truncateToWidth(line, innerWidth, '');
+        const edge = (value: string) => palette.fg('borderAccent', value);
+        return edge(top ? '╭' : bottom ? '╰' : '│') + text + (top || bottom ? edge('─'.repeat(Math.max(0, innerWidth - visibleWidth(text)))) : ' '.repeat(Math.max(0, innerWidth - visibleWidth(text)))) + edge(top ? '╮' : bottom ? '╯' : '│');
+      }) : rows;
+      if (isCollapsed()) return box([frame.header[0], truncateToWidth(`Collapsed · ${collapseKey || '/asks'} reopens · draft retained`, innerWidth, ''), frame.footer]);
       page = Math.max(1, budget - frame.header.length - 1); const last = Math.max(0, frame.lines.length - page);
       offset = inspect ? Math.max(0, Math.min(last, offset)) : Math.max(0, Math.min(last, frame.focus[0] - Math.floor(page / 2)));
-      return [...frame.header, ...frame.lines.slice(offset, offset + page), frame.footer].slice(0, budget);
+      return box([...frame.header, ...frame.lines.slice(offset, offset + page), frame.footer].slice(0, budget));
     },
     handleInput(data: string) {
       if (disposed || !mounted || !model.current()) {
@@ -91,7 +97,7 @@ export function createQuestionHost(context: any, options: { collapseKey?: string
     if (mounted) return;
     context.ui.setWidget(widgetKey, (reference: any, theme: any) => {
       if (typeof reference.getFocusedComponent !== 'function' || typeof reference.setFocus !== 'function') throw new Error('SDK lacks public inline focus support.');
-      tui = reference;
+      tui = reference; palette = theme;
       // Renderer references can be write-through Proxies. Never assign their methods.
       const delegate = new Proxy({} as any, { get(_target, property) { const value = Reflect.get(tui, property, tui); return typeof value === 'function' ? value.bind(tui) : value; } });
       view ||= new QuestionView(model, delegate, theme, async (text) => {

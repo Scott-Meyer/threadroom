@@ -32,7 +32,7 @@ export class QuestionView {
     for (const key of this.drafts.keys()) if (!live.has(key)) this.drafts.delete(key);
     let editors = this.drafts.get(draftKey);
     if (!editors) {
-      editors = { input: new Input(), notes: new Editor(this.tui, { borderColor: (text) => this.theme.fg('accent', text), selectList: { selectedPrefix: (text) => this.theme.fg('accent', text), selectedText: (text) => this.theme.fg('accent', text), description: (text) => this.theme.fg('dim', text), scrollInfo: (text) => this.theme.fg('dim', text), noMatch: (text) => this.theme.fg('warning', text) } }, getKeybindings()), custom: !current.question?.options?.length, editingNotes: false };
+      editors = { input: new Input({ prompt: '' }), notes: new Editor(this.tui, { borderColor: (text) => this.theme.fg('accent', text), selectList: { selectedPrefix: (text) => this.theme.fg('accent', text), selectedText: (text) => this.theme.fg('accent', text), description: (text) => this.theme.fg('dim', text), scrollInfo: (text) => this.theme.fg('dim', text), noMatch: (text) => this.theme.fg('warning', text) } }, getKeybindings()), custom: !current.question?.options?.length, editingNotes: false };
       const captured = editors;
       editors.notes.onSubmit = (text) => { captured.submittedNotes = readable(text); captured.editingNotes = false; this.tui.requestRender(); };
       this.drafts.set(draftKey, editors);
@@ -95,23 +95,22 @@ export class QuestionView {
       const checkbox = question.multiSelect ? (current.checked?.includes(index) ? '[x] ' : '[ ] ') : '';
       const rows = wrap(`${pointer} ${index + 1}. ${checkbox}${option.label}`);
       if (index === current.option && !editors.custom) { focus = lines.length; focusEnd = focus + rows.length; }
-      lines.push(...rows.map((line) => this.theme.fg(index === current.option ? 'accent' : 'text', line)));
+      lines.push(...rows.map((line) => this.theme.fg(index === current.option && !editors.custom ? 'accent' : 'text', line)));
     }
-    if (options.length) {
-      const selectedCustom = editors.custom || current.option === options.length;
-      const rows = wrap(`${selectedCustom ? '❯' : ' '} ${options.length + 1}. Type something.`);
-      if (selectedCustom) { focus = lines.length; focusEnd = focus + rows.length; }
-      lines.push(...rows);
-    }
-    if (editors.custom) {
-      const start = lines.length, input = editors.input.render(width); lines.push(...input);
-      focus = start + this.caret(input, 0)[0]; focusEnd = focus + 1;
-    } else if (current.reply) lines.push(...wrap(`Draft retained: ${current.reply}`));
+    const selectedCustom = editors.custom || current.option === options.length;
+    const prefix = truncateToWidth(options.length ? `${selectedCustom ? '❯' : ' '} ${options.length + 1}. Reply: ` : 'Reply: ', Math.max(0, width - 1), '');
+    const fieldWidth = Math.max(1, width - visibleWidth(prefix));
+    const input = editors.input.focused ? editors.input.render(fieldWidth)
+      : [this.theme.fg(current.reply ? 'text' : 'dim', truncateToWidth(readable(current.reply || 'Write a reply…'), fieldWidth, ''))];
+    const start = lines.length;
+    lines.push(...input.map((line, index) => (index ? ' '.repeat(visibleWidth(prefix)) : this.theme.fg(selectedCustom ? 'accent' : 'text', prefix)) + line));
+    if (selectedCustom) { focus = start + this.caret(input, 0)[0]; focusEnd = focus + 1; }
     if (editors.editingNotes) {
       lines.push(...wrap('Notes:'));
-      const start = lines.length, notes = editors.notes.render(width); lines.push(...notes); focus = start + this.caret(notes, 0)[0]; focusEnd = focus + 1;
+      const start = lines.length, notes = editors.notes.focused ? editors.notes.render(width) : wrap(current.notes || 'Write notes…');
+      lines.push(...notes); focus = start + this.caret(notes, 0)[0]; focusEnd = focus + 1;
     } else if (current.notes) lines.push(...wrap(`Notes: ${current.notes}`));
-    if (selected?.preview !== undefined && !editors.editingNotes) {
+    if (selected?.preview !== undefined && !editors.editingNotes && !editors.custom) {
       const preview = readable(selected.preview);
       lines.push(...(question.plainPreview ? wrap(preview) : new Markdown(preview, 0, 0, getMarkdownTheme()).render(width)));
     }
