@@ -104,6 +104,8 @@ curl -s http://127.0.0.1:4310/api/nodes/NODE_ID/respond \
 
 The default response intent is `answer`; ordinary replies only need `body`. Returns the saved response’s node/context plus `responseId`, `target`, and `deduplicated`. A response captures the target presentation revision, written content, labeled values, and author/time. It becomes a child of the target node. Any later thread can use that response ID as `parentId`.
 
+Selection `value` is JSON, not a mandatory form schema. The reference website displays self-contained raster/SVG data images under `image`, `snapshot`, or `questionImage` as pictures, and a string `notes` separately from the bounded JSON preview. These are optional viewer conveniences; other values remain saved unchanged. Capture an important generated/drawn/arranged state explicitly instead of assuming replaying an interactive document proves what someone saw.
+
 Responses may also provide their own `presentation: {kind: "html-v1", html, fallback}`. Question and answer surfaces share the authored-presentation boundary.
 
 | Response intent | Target answer-request state | Meaning |

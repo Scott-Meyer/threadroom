@@ -177,10 +177,17 @@ function nodeContext(node) {
 const statusChip = (status) => status ? `<span class="status-chip ${esc(status)}">${statusLabels[status] || esc(status)}</span>` : '';
 function renderSavedValues(selections=[]) {
   return selections.map((selection) => {
-    const image = selection.value?.image;
-    const hasImage = typeof image === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,/.test(image);
-    const readable = hasImage ? {...selection.value,image:'[Captured generated image shown above]'} : selection.value;
-    return `<div class="saved-values"><strong>${esc(selection.label || selection.id || 'Interaction values')}</strong>${hasImage ? `<img class="saved-generation" src="${esc(image)}" alt="Captured generated study from the submitted response">` : ''}${readable != null ? `<pre>${esc(JSON.stringify(readable,null,2).slice(0,3000))}</pre>` : ''}</div>`;
+    // Images stay in image context (SVG cannot execute as an <img> document).
+    // Recognize captures without exposing encoded image bytes as readable notes.
+    const captures = ['questionImage','image','snapshot'].filter((key) => {
+      const value = selection.value?.[key];
+      return typeof value === 'string' && /^data:image\/(png|jpeg|webp|gif|svg\+xml)(?:;[^,]*)?,/i.test(value);
+    });
+    const readable = captures.length ? {...selection.value} : selection.value;
+    for (const key of captures) readable[key] = '[Captured image shown above]';
+    const images = captures.map((key) => `<img class="saved-generation" src="${esc(selection.value[key])}" alt="${key === 'questionImage' ? 'Captured question reference' : 'Captured visual answer'}">`).join('');
+    const notes = typeof selection.value?.notes === 'string' && selection.value.notes.trim() ? `<p>${esc(selection.value.notes)}</p>` : '';
+    return `<div class="saved-values"><strong>${esc(selection.label || selection.id || 'Interaction values')}</strong>${images}${notes}${readable != null ? `<pre>${esc(JSON.stringify(readable,null,2).slice(0,3000))}</pre>` : ''}</div>`;
   }).join('');
 }
 function proposalSummary(proposal) {

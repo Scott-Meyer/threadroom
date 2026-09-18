@@ -24,6 +24,8 @@ node examples/publish-canvas.js
 
 This makes one API call to resolve/create `MistFall → Creatures → Mist creature → Procedural studies`, publish a question, and capture its authored interactive document. Tune/generate an illustrative image, propose it, then save written feedback or reject through the separate Threadroom controls. Saved parameters and PNG snapshot remain readable without running the canvas. Questions **and answers** can carry authored canvases.
 
+For a collection of clearly labeled interaction tests—moving/keyboard scenes, overlapping objects, multi-select, picture choices, drawing, and three nested questions—run `node examples/playground/publish.js`. [Playground instructions](examples/playground/README.md) cover proposing values, adding notes, and using the separate host Save controls.
+
 To try a normal question call that waits for your response:
 
 ```sh

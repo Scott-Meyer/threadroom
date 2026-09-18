@@ -11,6 +11,8 @@ import { createServer } from 'node:http';
 import { createWebsiteHandler } from '../src/site.js';
 import { createThreadroomServer } from '../src/server.js';
 import { ThreadroomClient } from '../public/client.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 async function runningService(database, options = {}) {
   const store = new ThreadStore(database);
@@ -507,6 +509,41 @@ test('caller correlation and watch event identities survive restart and idempote
     assert.deepEqual(replay, events);
     const tail = (await request(service, `/api/events?after=${events[0].sequence}`)).result.events;
     assert.deepEqual(tail, [events[1]]);
+  } finally {
+    if (service.server.listening) await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('the interaction playground publishes reproducible rich requests and three actually nested questions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'threadroom-playground-'));
+  const database = join(directory, 'records.sqlite');
+  let service = await runningService(database);
+  const run = () => promisify(execFile)(process.execPath, ['examples/playground/publish.js'], {
+    env: { ...process.env, THREADROOM_API_URL: service.url, THREADROOM_UI_URL: service.url }, timeout: 10000
+  }).then(({stdout}) => JSON.parse(stdout));
+  try {
+    const first = await run();
+    assert.equal(first.questions.length, 8);
+    assert.deepEqual(await run(), first);
+    const nodes = (await request(service, '/api/tree')).result.nodes;
+    assert.equal(nodes.length, 9);
+    assert.equal(nodes.filter(node => node.status === 'outstanding').length, 8);
+    let parentId = first.root.id;
+    for (const question of first.questions.filter(q => q.slug.startsWith('nested-'))) {
+      const read = (await request(service, `/api/nodes/${question.id}`)).result;
+      assert.equal(read.node.parentId, parentId);
+      parentId = question.id;
+    }
+    const pictures = first.questions.find(q => q.slug === 'images');
+    const before = (await request(service, `/api/nodes/${pictures.id}`)).result.node.presentation;
+    await service.close(); service = await runningService(database);
+    const after = (await request(service, `/api/nodes/${pictures.id}`)).result.node.presentation;
+    assert.deepEqual(after, before);
+    const multi = (await request(service, `/api/nodes/${first.questions.find(q=>q.slug==='multiple').id}`)).result.node;
+    assert.equal(multi.presentation.multiple, true);
+    assert.ok(multi.presentation.choices.includes('Drawing an answer'));
   } finally {
     if (service.server.listening) await service.close();
     await rm(directory, { recursive: true, force: true });

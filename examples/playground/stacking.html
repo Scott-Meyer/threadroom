@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a little composition · Threadroom playground</title>
+<style>
+:root{color-scheme:light;font:15px/1.5 system-ui,sans-serif;background:#f6f2e9;color:#272e34}*{box-sizing:border-box}body{margin:0;padding:20px;max-width:740px;margin-inline:auto}h1{font-size:clamp(24px,5vw,34px);line-height:1.15;margin:5px 0 12px}.eyebrow{color:#776544;text-transform:uppercase;letter-spacing:.14em;font-size:11px;font-weight:750}p{color:#56616b;margin:8px 0 15px}.scene{background:#fffcf6;border:1px solid #c9c1b4;border-radius:16px;overflow:hidden;box-shadow:0 18px 40px #544b3910}canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}canvas.dragging{cursor:grabbing}canvas:focus-visible{outline:3px solid #245b83;outline-offset:-5px}.scene-caption{display:flex;justify-content:space-between;gap:8px;padding:9px 13px;font-size:12px;color:#56616b;border-top:1px solid #e4ded1}.objects{display:flex;gap:7px;flex-wrap:wrap;margin:15px 0 10px}button,textarea{font:inherit}button{border:1px solid #a6a99f;border-radius:9px;padding:9px 12px;background:#fffcf6;color:#272e34;cursor:pointer;min-height:44px}button:hover{background:#ede8dc}button:disabled{opacity:.5;cursor:default}button:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #245b83;outline-offset:3px}.objects button{flex:1;font-size:12px;min-width:85px}.objects button[aria-pressed=true]{border:2px solid #245b83;background:#e6eff3;padding:8px 11px}.swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--color);border:1px solid #0002}.controls,.directions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.directions button{flex:1;min-width:55px}details{margin:13px 0;color:#56616b}summary{cursor:pointer}kbd{background:#ede8dc;border:1px solid #c9c1b4;border-radius:4px;padding:1px 4px;font:12px system-ui}label.notes{display:block;margin-top:18px;font-weight:650}textarea{margin:7px 0;width:100%;min-height:84px;resize:vertical;color:#272e34;background:#fffcf6;border:1px solid #a6a99f;border-radius:9px;padding:10px}.primary{background:#294f62;color:#fff;border-color:#294f62;font-weight:750}.primary:hover{background:#1a3c4e}.save-note{font-size:13px}.status{min-height:24px;color:#245b83;font-size:13px}.footer{border-top:1px solid #d5cec1;margin-top:16px;padding-top:14px}@media(max-width:400px){body{padding:14px}.scene-caption{font-size:11px}.controls>button{flex:1}}
+</style>
+</head>
+<body>
+<div class="eyebrow">Interactive answer / stacking</div>
+<h1>Make a little composition.</h1>
+<p>Arrange these five pieces into something that feels balanced. Put one on top of another, tuck it behind, or let the shapes tell a story.</p>
+<div class="scene">
+<canvas id="stacking-board" width="640" height="360" tabindex="0" role="application" aria-label="Composition board. Select a piece below, then use arrow keys to move it. Shift moves in larger steps. Home brings it to the front, End sends it behind." aria-describedby="stacking-help">Five colored pieces. Choose a piece and use the movement and layer controls below.</canvas>
+<div class="scene-caption"><span id="stacking-selection" role="status" aria-live="polite">Selected piece</span><span>320 × 180 stage</span></div>
+</div>
+<div id="stacking-objects" class="objects" role="group" aria-label="Select a piece">
+<button id="stacking-select-amber" type="button" data-object="amber" aria-pressed="true" style="--color:#e7ae43"><span class="swatch" aria-hidden="true"></span>1 Amber</button>
+<button id="stacking-select-coral" type="button" data-object="coral" aria-pressed="false" style="--color:#e57e6d"><span class="swatch" aria-hidden="true"></span>2 Coral</button>
+<button id="stacking-select-blue" type="button" data-object="blue" aria-pressed="false" style="--color:#477b9c"><span class="swatch" aria-hidden="true"></span>3 Blue</button>
+<button id="stacking-select-sage" type="button" data-object="sage" aria-pressed="false" style="--color:#87a38a"><span class="swatch" aria-hidden="true"></span>4 Sage</button>
+<button id="stacking-select-plum" type="button" data-object="plum" aria-pressed="false" style="--color:#917eab"><span class="swatch" aria-hidden="true"></span>5 Plum</button>
+</div>
+<div class="controls">
+<button id="stacking-front" type="button">Bring to front</button>
+<button id="stacking-back" type="button">Send to back</button>
+<button id="stacking-reset" type="button">Reset</button>
+</div>
+<div class="directions" role="group" aria-label="Nudge selected piece">
+<button id="stacking-left" type="button" aria-label="Nudge selected piece left">← Left</button>
+<button id="stacking-up" type="button" aria-label="Nudge selected piece up">↑ Up</button>
+<button id="stacking-down" type="button" aria-label="Nudge selected piece down">↓ Down</button>
+<button id="stacking-right" type="button" aria-label="Nudge selected piece right">→ Right</button>
+</div>
+<details open><summary>How to compose</summary><p id="stacking-help">Drag a piece with your mouse or finger. Dragging does not change its layer; use the front/back controls to change which piece is on top. To reach a hidden piece, choose its named button above. Focus the board or a piece button and use <kbd>↑ ↓ ← →</kbd> to nudge; hold <kbd>Shift</kbd> for bigger steps. <kbd>Home</kbd> brings it forward, <kbd>End</kbd> sends it back, and <kbd>R</kbd> resets.</p></details>
+<label class="notes" for="stacking-notes">Written response / notes (optional)</label>
+<textarea id="stacking-notes" maxlength="4000" placeholder="What does your arrangement suggest? Why did you choose these overlaps?"></textarea>
+<div class="footer">
+<button id="stacking-propose" type="button" class="primary">Use this arrangement</button>
+<p class="save-note">This adds the arrangement, a snapshot, and your notes to the draft. Notes edited here after proposing keep the draft updated. You can also write below; use the host’s <strong>Save</strong> button below to persist your answer.</p>
+<div id="stacking-status" class="status" role="status" aria-live="polite"></div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $=id=>document.getElementById(id), board=$('stacking-board'), ctx=board.getContext('2d');
+  let lastProposal=null;
+  $('stacking-notes').addEventListener('input',()=>{
+    if(!lastProposal)return;
+    const values={...lastProposal.values,notes:$('stacking-notes').value};
+    try{window.Threadroom.propose(values,lastProposal.summary);lastProposal={...lastProposal,values};$('stacking-status').textContent='Notes updated in your proposed draft. Host Save still records it.';}
+    catch(error){$('stacking-status').textContent='Notes not proposed: '+error.message+' Use the separate Threadroom text field below.';}
+  });
+  const initial=[
+    {id:'amber',name:'Amber block',number:1,shape:'rectangle',color:'#e7ae43',x:63,y:59,width:69,height:43},
+    {id:'coral',name:'Coral disc',number:2,shape:'ellipse',color:'#e57e6d',x:153,y:55,width:53,height:53},
+    {id:'blue',name:'Blue arch',number:3,shape:'arch',color:'#477b9c',x:258,y:66,width:50,height:66},
+    {id:'sage',name:'Sage triangle',number:4,shape:'triangle',color:'#87a38a',x:104,y:134,width:67,height:53},
+    {id:'plum',name:'Plum tile',number:5,shape:'roundrect',color:'#917eab',x:218,y:135,width:65,height:42}
+  ];
+  let objects=initial.map(object=>({...object})), selected='amber', drag=null;
+  const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
+  const current=()=>objects.find(object=>object.id===selected);
+  function position(object,x,y){object.x=clamp(x,object.width/2+2,318-object.width/2);object.y=clamp(y,object.height/2+2,178-object.height/2);}
+  function path(object){
+    const p=new Path2D(),left=object.x-object.width/2,top=object.y-object.height/2,w=object.width,h=object.height;
+    if(object.shape==='ellipse')p.ellipse(object.x,object.y,w/2,h/2,0,0,Math.PI*2);
+    else if(object.shape==='triangle'){p.moveTo(object.x,top);p.lineTo(left+w,top+h);p.lineTo(left,top+h);p.closePath();}
+    else if(object.shape==='arch'){p.moveTo(left,top+h);p.lineTo(left,top+w/2);p.arc(object.x,top+w/2,w/2,Math.PI,0);p.lineTo(left+w,top+h);p.closePath();}
+    else if(object.shape==='roundrect')p.roundRect(left,top,w,h,7);
+    else p.rect(left,top,w,h);
+    return p;
+  }
+  function draw(target=ctx,showSelection=true){
+    target.setTransform(target.canvas.width/320,0,0,target.canvas.height/180,0,0);
+    target.fillStyle='#fffcf6';target.fillRect(0,0,320,180);
+    target.fillStyle='#d9d2c3';for(let x=10;x<320;x+=15)for(let y=10;y<180;y+=15){target.beginPath();target.arc(x,y,.5,0,Math.PI*2);target.fill();}
+    for(const object of objects){
+      const p=path(object);target.fillStyle=object.color;target.fill(p);target.strokeStyle='#26354133';target.lineWidth=1;target.stroke(p);
+      target.fillStyle=object.id==='blue'?'#fffaf1':'#272e34';target.font='bold 12px system-ui';target.textAlign='center';target.textBaseline='middle';target.fillText(String(object.number),object.x,object.y+(object.shape==='triangle'?8:0));
+    }
+    if(showSelection){const object=current();target.save();target.setLineDash([3,3]);target.lineWidth=1.5;target.strokeStyle='#245b83';target.strokeRect(object.x-object.width/2-2,object.y-object.height/2-2,object.width+4,object.height+4);target.restore();}
+  }
+  function sync(){
+    const object=current(),layer=objects.findIndex(item=>item.id===selected)+1;
+    $('stacking-selection').textContent=`${object.number} ${object.name} · ${Math.round(object.x)}, ${Math.round(object.y)} · layer ${layer}/5`;
+    for(const button of $('stacking-objects').querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.object===selected));
+    $('stacking-front').disabled=layer===5;$('stacking-back').disabled=layer===1;draw();
+  }
+  function select(id){selected=id;sync();}
+  function nudge(dx,dy){const object=current();position(object,object.x+dx,object.y+dy);sync();}
+  function layer(front){const index=objects.findIndex(item=>item.id===selected),[object]=objects.splice(index,1);if(front)objects.push(object);else objects.unshift(object);sync();$('stacking-status').textContent=`${object.name} moved to the ${front?'front':'back'}.`;}
+  function endDrag(){if(!drag)return;const id=drag.pointerId;drag=null;board.classList.remove('dragging');if(board.hasPointerCapture(id))board.releasePointerCapture(id);sync();}
+  function reset(){endDrag();objects=initial.map(object=>({...object}));selected='amber';sync();$('stacking-status').textContent='Arrangement reset. Your notes are unchanged.';}
+  function point(event){const rect=board.getBoundingClientRect();return {x:(event.clientX-rect.left)/rect.width*320,y:(event.clientY-rect.top)/rect.height*180};}
+  board.addEventListener('pointerdown',event=>{
+    if(event.button!==0||drag)return;
+    board.focus();const p=point(event);
+    // Canvas hit-testing accepts device-space points, even when paths use a scaled world space.
+    const object=[...objects].reverse().find(item=>ctx.isPointInPath(path(item),p.x*2,p.y*2));
+    if(!object)return;select(object.id);drag={pointerId:event.pointerId,id:object.id,dx:p.x-object.x,dy:p.y-object.y};board.setPointerCapture(event.pointerId);board.classList.add('dragging');
+  });
+  board.addEventListener('pointermove',event=>{if(!drag||event.pointerId!==drag.pointerId)return;const p=point(event),object=objects.find(item=>item.id===drag.id);position(object,p.x-drag.dx,p.y-drag.dy);draw();});
+  board.addEventListener('pointerup',event=>{if(drag?.pointerId===event.pointerId)endDrag();});
+  board.addEventListener('pointercancel',event=>{if(drag?.pointerId===event.pointerId)endDrag();});
+  board.addEventListener('lostpointercapture',event=>{if(drag?.pointerId===event.pointerId){drag=null;board.classList.remove('dragging');}});
+  for(const button of $('stacking-objects').querySelectorAll('button'))button.addEventListener('click',()=>{endDrag();select(button.dataset.object);});
+  function keyboard(event){
+    const key=event.key.length===1?event.key.toLowerCase():event.key,steps=event.shiftKey?10:2;
+    const delta={ArrowLeft:[-steps,0],ArrowRight:[steps,0],ArrowUp:[0,-steps],ArrowDown:[0,steps]};
+    if(delta[key]){event.preventDefault();endDrag();nudge(...delta[key]);}
+    else if(key==='Home'||key==='End'){event.preventDefault();endDrag();layer(key==='Home');}
+    else if(key==='r'){event.preventDefault();if(!event.repeat)reset();}
+  }
+  board.addEventListener('keydown',keyboard);
+  $('stacking-objects').addEventListener('keydown',event=>{if(event.target.dataset.object){select(event.target.dataset.object);keyboard(event);}});
+  for(const [name,delta] of Object.entries({left:[-4,0],right:[4,0],up:[0,-4],down:[0,4]}))$('stacking-'+name).addEventListener('click',()=>{endDrag();nudge(...delta);});
+  $('stacking-front').addEventListener('click',()=>{endDrag();layer(true);});$('stacking-back').addEventListener('click',()=>{endDrag();layer(false);});$('stacking-reset').addEventListener('click',reset);
+  $('stacking-propose').addEventListener('click',()=>{
+    endDrag();const snapshot=document.createElement('canvas');snapshot.width=320;snapshot.height=180;draw(snapshot.getContext('2d'),false);
+    const values={kind:'stacking',version:1,coordinateSpace:{width:320,height:180,origin:'top-left',position:'center'},objects:objects.map((object,index)=>({...object,x:Math.round(object.x*100)/100,y:Math.round(object.y*100)/100,layer:index+1})),layerOrderBackToFront:objects.map(object=>object.id),snapshot:snapshot.toDataURL('image/png'),notes:$('stacking-notes').value};
+    const summary=`Five-piece composition · back to front: ${objects.map(object=>object.number+' '+object.id).join(' → ')}`;
+    if(new TextEncoder().encode(JSON.stringify({values,summary})).length>60*1024){$('stacking-status').textContent='This snapshot is too large. Please shorten your notes and try again.';return;}
+    if(typeof window.Threadroom?.propose!=='function'){$('stacking-status').textContent='Preview only: open this document in Threadroom to add it to a draft.';return;}
+    try{window.Threadroom.propose(values,summary);lastProposal={values,summary};$('stacking-status').textContent='Added to the draft. Add your written response, then use Save below.';}catch(error){$('stacking-status').textContent='Could not update the draft. Please try again.';}
+  });
+  sync();
+})();
+</script>
+</body>
+</html>

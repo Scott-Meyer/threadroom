@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A light in the woods · Threadroom playground</title>
+<style>
+:root{color-scheme:dark;font:15px/1.5 system-ui,sans-serif;background:#101b26;color:#ecf3f6}*{box-sizing:border-box}body{margin:0;padding:20px;max-width:740px;margin-inline:auto}h1{font-size:clamp(24px,5vw,34px);line-height:1.15;margin:5px 0 12px}.eyebrow{color:#a9dfcf;text-transform:uppercase;letter-spacing:.14em;font-size:11px;font-weight:750}p{color:#bfcfd9;margin:8px 0 15px}.scene{background:#182c39;border:1px solid #486071;border-radius:16px;overflow:hidden;box-shadow:0 18px 40px #0004}canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair}canvas:focus-visible{outline:3px solid #ffdf91;outline-offset:-5px}.scene-caption{display:flex;justify-content:space-between;gap:8px;padding:9px 13px;font-size:12px;color:#c4d4de}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:14px 0}button,textarea,input{font:inherit}button{border:1px solid #65808e;border-radius:9px;padding:9px 13px;background:#253b4b;color:#f5fbff;cursor:pointer;min-height:44px}button:hover{background:#344e61}button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #ffdf91;outline-offset:3px}.primary{background:#c8eadb;color:#122c24;border-color:#c8eadb;font-weight:750}.primary:hover{background:#e0f9ed}.speed{display:flex;align-items:center;gap:9px;flex:1;min-width:220px}.speed input{width:100%;min-width:60px;accent-color:#a9dfcf}.speed output{min-width:3em}.directions{display:flex;gap:7px;flex-wrap:wrap}.directions button{flex:1;min-width:55px}details{margin:13px 0;color:#c4d4de}summary{cursor:pointer}kbd{background:#2c4353;border:1px solid #526675;border-radius:4px;padding:1px 4px;font:12px system-ui}label.notes{display:block;margin-top:18px;font-weight:650}textarea{margin:7px 0;width:100%;min-height:84px;resize:vertical;color:#ecf3f6;background:#172936;border:1px solid #65808e;border-radius:9px;padding:10px}.save-note{font-size:13px}.status{min-height:24px;color:#ffdf91;font-size:13px}.footer{border-top:1px solid #3a505f;margin-top:16px;padding-top:14px}@media(max-width:400px){body{padding:14px}.scene-caption{font-size:11px}.controls>button{flex:1}}
+</style>
+</head>
+<body>
+<div class="eyebrow">Interactive answer / motion</div>
+<h1>Where would you leave a light?</h1>
+<p>Guide the little lantern through this dusk clearing. Find a spot that feels welcoming, or capture a moment that tells a different story.</p>
+<div class="scene">
+<canvas id="motion-board" width="640" height="360" tabindex="0" role="application" aria-label="Lantern clearing. Arrow keys or W A S D move the lantern. Space pauses or plays. R resets." aria-describedby="motion-help">A lantern in a woodland clearing. Use the direction buttons below to move it.</canvas>
+<div class="scene-caption"><span id="motion-position">Lantern position</span><span id="motion-state">Playing</span></div>
+</div>
+<div class="controls">
+<button id="motion-play" type="button" aria-pressed="false">Pause scene</button>
+<button id="motion-reset" type="button">Reset</button>
+<label class="speed" for="motion-speed">Speed <input id="motion-speed" type="range" min="0.25" max="2" step="0.25" value="1"><output id="motion-speed-value" for="motion-speed">1×</output></label>
+</div>
+<div class="directions" aria-label="Move lantern without a keyboard">
+<button id="motion-left" type="button" aria-label="Move lantern left">← Left</button>
+<button id="motion-up" type="button" aria-label="Move lantern up">↑ Up</button>
+<button id="motion-down" type="button" aria-label="Move lantern down">↓ Down</button>
+<button id="motion-right" type="button" aria-label="Move lantern right">→ Right</button>
+</div>
+<details open><summary>How to explore</summary><p id="motion-help">Click or focus the scene, then use <kbd>↑ ↓ ← →</kbd> or <kbd>W A S D</kbd>. <kbd>Space</kbd> pauses; <kbd>R</kbd> resets. Click, tap, or drag in the clearing to place the lantern directly. You can move it while paused. Reduced-motion preferences start the scene paused.</p></details>
+<label class="notes" for="motion-notes">Written response / notes (optional)</label>
+<textarea id="motion-notes" maxlength="4000" placeholder="Why this spot? What did you notice about moving through the scene?"></textarea>
+<div class="footer">
+<button id="motion-propose" type="button" class="primary">Use this moment</button>
+<p class="save-note">This pauses the scene and adds a snapshot, its settings, and your notes to the draft. Notes edited here after proposing keep the draft updated. You can also write below; use the host’s <strong>Save</strong> button below to persist your answer.</p>
+<div id="motion-status" class="status" role="status" aria-live="polite"></div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  let lastProposal=null;
+  $('motion-notes').addEventListener('input',()=>{
+    if(!lastProposal)return;
+    const values={...lastProposal.values,notes:$('motion-notes').value};
+    try{window.Threadroom.propose(values,lastProposal.summary);lastProposal={...lastProposal,values};$('motion-status').textContent='Notes updated in your proposed draft. Host Save still records it.';}
+    catch(error){$('motion-status').textContent='Notes not proposed: '+error.message+' Use the separate Threadroom text field below.';}
+  });
+  const board = $('motion-board'), ctx = board.getContext('2d');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const keys = new Set();
+  const vectors = {ArrowLeft:[-1,0],a:[-1,0],ArrowRight:[1,0],d:[1,0],ArrowUp:[0,-1],w:[0,-1],ArrowDown:[0,1],s:[0,1]};
+  let x = 158, y = 120, phase = 0, speed = 1, playing = !reduced.matches, frame = 0, previous = 0, pointer = null;
+  const clamp = (n,lo,hi) => Math.max(lo,Math.min(hi,n));
+  function move(dx,dy) { x = clamp(x+dx,12,308); y = clamp(y+dy,26,156); }
+  function circle(cx,cy,r,color) {ctx.fillStyle=color;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();}
+  function tree(tx,ty,scale) {
+    ctx.save();ctx.translate(tx,ty);ctx.scale(scale,scale);
+    ctx.fillStyle='#152b34';ctx.fillRect(-3,-52,6,63);
+    for(let i=0;i<3;i++){ctx.fillStyle=i===0?'#294550':'#1d3844';ctx.beginPath();ctx.moveTo(0,-90+i*21);ctx.lineTo(-23+i*3,-38+i*20);ctx.lineTo(23-i*3,-38+i*20);ctx.closePath();ctx.fill();}ctx.restore();
+  }
+  function draw() {
+    ctx.setTransform(2,0,0,2,0,0);
+    const sky=ctx.createLinearGradient(0,0,0,180);sky.addColorStop(0,'#172538');sky.addColorStop(1,'#385661');ctx.fillStyle=sky;ctx.fillRect(0,0,320,180);
+    circle(265,30,12,'#cadfd7');circle(270,26,12,'#213043');
+    for(let i=0;i<20;i++)circle((i*73+23)%320,8+(i*37)%62,.65,'#bbd5d2');
+    ctx.fillStyle='#28484c';ctx.beginPath();ctx.moveTo(0,103);ctx.quadraticCurveTo(95,62,166,100);ctx.quadraticCurveTo(255,62,320,91);ctx.lineTo(320,180);ctx.lineTo(0,180);ctx.fill();
+    [12,48,91,229,301].forEach((tx,i)=>tree(tx,99+i%2*7,.75+i%3*.12));
+    ctx.fillStyle='#304f4d';ctx.fillRect(0,119,320,61);
+    ctx.strokeStyle='#8a8a68';ctx.lineWidth=14;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(35,173);ctx.bezierCurveTo(105,144,212,159,283,121);ctx.stroke();
+    ctx.strokeStyle='#a6a484';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(36,170);ctx.bezierCurveTo(106,141,213,156,283,118);ctx.stroke();
+    ctx.fillStyle='#50797d';ctx.beginPath();ctx.moveTo(179,112);ctx.bezierCurveTo(192,139,172,158,177,180);ctx.lineTo(200,180);ctx.bezierCurveTo(193,157,212,137,192,112);ctx.fill();
+    ctx.fillStyle='#947d59';ctx.save();ctx.translate(186,149);ctx.rotate(-.17);ctx.fillRect(-24,-5,48,10);ctx.strokeStyle='#594d3b';for(let i=-20;i<24;i+=7){ctx.beginPath();ctx.moveTo(i,-5);ctx.lineTo(i,5);ctx.stroke();}ctx.restore();
+    ctx.fillStyle='#6b6860';ctx.fillRect(42,95,31,28);ctx.fillStyle='#34333a';ctx.beginPath();ctx.moveTo(36,97);ctx.lineTo(57,76);ctx.lineTo(79,97);ctx.fill();ctx.fillStyle='#e2b66d';ctx.fillRect(54,104,9,12);
+    for(let i=0;i<10;i++){
+      const fx=35+(i*29)%251+Math.sin(phase*(.7+i*.05)+i)*8, fy=92+(i*17)%55+Math.cos(phase*.8+i)*6;
+      circle(fx,fy,2.7,'#d8edaa18');circle(fx,fy,.85,'#d8edaa');
+    }
+    const halo=ctx.createRadialGradient(x,y,2,x,y,30);halo.addColorStop(0,'#ffe5a566');halo.addColorStop(1,'#ffe5a500');ctx.fillStyle=halo;ctx.fillRect(x-30,y-30,60,60);
+    ctx.fillStyle='#0d202666';ctx.beginPath();ctx.ellipse(x,y+10,9,3,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#f6d488';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y-6,3,Math.PI,0);ctx.stroke();ctx.fillStyle='#ffdf91';ctx.fillRect(x-4,y-6,8,12);ctx.fillStyle='#755c3c';ctx.fillRect(x-5,y-7,10,2);ctx.fillRect(x-5,y+5,10,2);
+    ctx.fillStyle='#d3e2d4';ctx.font='8px system-ui';ctx.fillText('CABIN',41,136);ctx.fillText('BRIDGE',169,171);ctx.fillText('CLEARING',252,105);
+    $('motion-position').textContent=`Lantern · ${Math.round(x)}, ${Math.round(y)}`;
+  }
+  function sync() {
+    $('motion-play').textContent=playing?'Pause scene':'Play scene';$('motion-play').setAttribute('aria-pressed',String(!playing));
+    $('motion-state').textContent=playing?'Playing':'Paused';$('motion-speed-value').textContent=`${speed}×`;
+  }
+  function tick(now) {
+    frame=0;const dt=Math.min((now-previous)/1000,.05);previous=now;
+    if(playing)phase+=dt*speed;
+    let dx=0,dy=0;for(const key of keys){dx+=vectors[key][0];dy+=vectors[key][1];}
+    const length=Math.hypot(dx,dy);if(length)move(dx/length*60*dt,dy/length*60*dt);
+    draw();if(playing||keys.size)frame=requestAnimationFrame(tick);
+  }
+  function start(){if(!frame){previous=performance.now();frame=requestAnimationFrame(tick);}}
+  function setPlaying(value){playing=value;sync();draw();if(playing||keys.size)start();}
+  function reset(){keys.clear();x=158;y=120;phase=0;speed=1;$('motion-speed').value='1';setPlaying(!reduced.matches);$('motion-status').textContent='Scene reset. Your notes are unchanged.';}
+  board.addEventListener('keydown',event=>{
+    const key=event.key.length===1?event.key.toLowerCase():event.key;
+    if(vectors[key]){event.preventDefault();if(!keys.has(key)){keys.add(key);move(vectors[key][0]*3,vectors[key][1]*3);draw();start();}}
+    else if(event.code==='Space'){event.preventDefault();if(!event.repeat)setPlaying(!playing);}
+    else if(key==='r'){event.preventDefault();if(!event.repeat)reset();}
+  });
+  board.addEventListener('keyup',event=>{const key=event.key.length===1?event.key.toLowerCase():event.key;if(vectors[key]){event.preventDefault();keys.delete(key);}});
+  board.addEventListener('blur',()=>keys.clear());
+  function place(event){const rect=board.getBoundingClientRect();x=clamp((event.clientX-rect.left)/rect.width*320,12,308);y=clamp((event.clientY-rect.top)/rect.height*180,26,156);draw();}
+  board.addEventListener('pointerdown',event=>{if(event.button!==0)return;board.focus();pointer=event.pointerId;board.setPointerCapture(pointer);place(event);});
+  board.addEventListener('pointermove',event=>{if(event.pointerId===pointer)place(event);});
+  const release=event=>{if(event.pointerId===pointer)pointer=null;};
+  board.addEventListener('pointerup',release);board.addEventListener('pointercancel',release);board.addEventListener('lostpointercapture',release);
+  for(const [name,delta] of Object.entries({left:[-8,0],right:[8,0],up:[0,-8],down:[0,8]}))$('motion-'+name).addEventListener('click',()=>{move(...delta);draw();});
+  $('motion-play').addEventListener('click',()=>setPlaying(!playing));$('motion-reset').addEventListener('click',reset);
+  $('motion-speed').addEventListener('input',event=>{speed=Number(event.target.value);sync();});
+  reduced.addEventListener('change',event=>{if(event.matches)setPlaying(false);});
+  window.addEventListener('blur',()=>keys.clear());
+  $('motion-propose').addEventListener('click',()=>{
+    keys.clear();setPlaying(false);
+    const snapshot=document.createElement('canvas');snapshot.width=320;snapshot.height=180;snapshot.getContext('2d').drawImage(board,0,0,320,180);
+    const values={kind:'motion',version:1,scene:'lantern-clearing',coordinateSpace:{width:320,height:180},lantern:{x:Math.round(x*100)/100,y:Math.round(y*100)/100},settings:{speed,paused:true,phaseSeconds:Math.round(phase*1000)/1000,reducedMotion:reduced.matches},snapshot:snapshot.toDataURL('image/png'),notes:$('motion-notes').value};
+    const summary=`Lantern at (${Math.round(x)}, ${Math.round(y)}) · ${speed}× speed · paused snapshot`;
+    if(new TextEncoder().encode(JSON.stringify({values,summary})).length>60*1024){$('motion-status').textContent='This snapshot is too large. Please shorten your notes and try again.';return;}
+    if(typeof window.Threadroom?.propose!=='function'){$('motion-status').textContent='Preview only: open this document in Threadroom to add it to a draft.';return;}
+    try{window.Threadroom.propose(values,summary);lastProposal={values,summary};$('motion-status').textContent='Added to the draft. Add your written response, then use Save below.';}catch(error){$('motion-status').textContent='Could not update the draft. Please try again.';}
+  });
+  sync();draw();if(playing)start();
+})();
+</script>
+</body>
+</html>
