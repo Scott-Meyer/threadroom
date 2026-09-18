@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+const [root, sdk] = process.argv.slice(2);
+const host = (path) => import(pathToFileURL(resolve(sdk, path)).href);
+const { loadExtensions } = await host('dist/core/extensions/loader.js');
+const themes = await host('dist/modes/interactive/theme/theme.js'); themes.initTheme('dark', false);
+const loaded = await loadExtensions([resolve(root, 'packages/pi-extension/fixtures/questions-navigation-proof.ts')], root); assert.deepEqual(loaded.errors, []);
+const result = await loaded.extensions[0].tools.get('owned_questions_navigation_proof').definition.execute('proof', {}, undefined, () => {}, { mode: 'tui', hasUI: true, ui: { theme: themes.theme } });
+console.log(JSON.stringify(result.details, null, 2));

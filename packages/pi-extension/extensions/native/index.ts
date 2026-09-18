@@ -1,9 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { createHash, randomUUID } from 'node:crypto';
-import { AskPanel, pendingCard, card, plain, type Feedback } from './ui.ts';
+import { AskPanel, pendingCard, plain, type Feedback } from './ui.ts';
 import type { NativeQuestionPresentation, NativeQuestionSource, NativeSavedAnswer } from './presentation.ts';
 import { createReceiptJournal } from './receipt.ts';
+import { renderNativeQuestion, renderNativeAnswer, renderNativeFeedback, renderAsyncAskCall, renderAsyncAskResult } from '../questions/stream.ts';
 
 const QUESTION = 'threadroom.native.question.v1';
 const ANSWER = 'threadroom.native.answer.v1';
@@ -243,12 +244,9 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     if (sameSession(ctx)) { ambient(ctx); flush(ctx); }
   });
 
-  pi.registerEntryRenderer<Question>(QUESTION, (entry, _options, theme) =>
-    card(theme.fg('accent', 'Private ask') + ` · ${entry.data?.id}\n${entry.data?.prompt.question}\nPresentation and storage status appear in Pi’s input area; /asks reopens questions.`));
-  pi.registerEntryRenderer<Answer>(ANSWER, (entry) =>
-    card(`Private answer · ${entry.data?.answerId}\n${entry.data?.prompt.question}\n${entry.data?.answer.text}`));
-  pi.registerMessageRenderer<Answer>(FEEDBACK, (message) =>
-    card(`Private feedback · ${message.details?.questionId}\n${message.details?.prompt.question}\n${message.details?.answer.text}`));
+  pi.registerEntryRenderer<Question>(QUESTION, (entry, options, theme) => renderNativeQuestion(entry.data, options, theme));
+  pi.registerEntryRenderer<Answer>(ANSWER, (entry, options, theme) => renderNativeAnswer(entry.data, options, theme));
+  pi.registerMessageRenderer<Answer>(FEEDBACK, (message, options, theme) => renderNativeFeedback(message.details, options, theme));
 
   function result(value: any) { return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: value }; }
   pi.registerTool({
@@ -262,9 +260,9 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
           preview: Type.Optional(Type.String({ maxLength: 12000, description: 'Optional plain-text preview.' })) })]),
       { maxItems: 20, description: 'Optional suggestions; the person can edit them or answer freely.' })),
     }),
-    renderCall(args) { return card(`Private async ask\n${args.question || ''}`); },
-    renderResult(value) { return card(value.details?.status === 'pending'
-      ? `Pending private ask · ${value.details.id} · /asks reopens` : `Private ask: ${value.details?.status || 'unavailable'}`); },
+    renderShell: 'self',
+    renderCall: renderAsyncAskCall,
+    renderResult: renderAsyncAskResult,
     async execute(toolCallId, params, signal, _update, ctx) {
       if (ctx.mode !== 'tui') return result({ status: 'unsupported_host', host: ctx.mode,
         reason: 'Native async asks require interactive Pi TUI; no question was saved.' });

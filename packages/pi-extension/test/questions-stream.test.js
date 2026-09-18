@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+const sdk=process.env.THREADROOM_PI_SDK_ROOT;
+test('private question/reply stream preserves truthful associations, full originals and safe themed SDK self-shell rendering', {skip:!sdk&&'Pi peer absent; set THREADROOM_PI_SDK_ROOT',timeout:30000},()=>{
+  const root=fileURLToPath(new URL('../../../',import.meta.url));
+  const fixture=fileURLToPath(new URL('../fixtures/questions-stream-proof.mjs',import.meta.url));
+  const result=spawnSync(process.execPath,[fixture,root,sdk],{encoding:'utf8',timeout:25000});
+  assert.equal(result.status,0,result.stderr||result.stdout);
+  const proof=JSON.parse(result.stdout);
+  assert.equal(proof.checks.length,6);
+  assert.equal(proof.actualSdkToolExecution,true);
+  assert.equal(proof.originalInputsUnchanged,true);
+  assert.equal(proof.neutralPrebindCaptions,true);
+  assert.equal(proof.authoredFieldsSanitizedBeforeTrustedTheme,true);
+  assert.equal(proof.networkAttempts,0);
+  assert.equal(proof.humanAcceptance,false);
+  assert.equal(proof.physicalPty,false);
+});

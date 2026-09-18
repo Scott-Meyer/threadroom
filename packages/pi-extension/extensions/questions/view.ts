@@ -10,6 +10,11 @@ export type QuestionFrame = { header: string[]; lines: string[]; focus: [number,
  * Returns complete frame content/geometry; the host owns its bounded viewport. */
 export class QuestionView {
   focused = false;
+  /** The host exposes Chat only when it can safely intercept reentry before the
+   * ordinary editor. These flags affect presentation, never question drafts. */
+  chatAvailable = false;
+  chatFocused = false;
+  chatReturnKey: string | undefined;
   private disposed = false;
   private drafts = new Map<string, DraftEditors>();
   private model: QuestionModel;
@@ -45,17 +50,19 @@ export class QuestionView {
     return editors;
   }
   private tabs(width: number, current: QuestionState) {
-    const tabs = this.model.tabs(), at = tabs.findIndex((tab) => tab.key === current.tab.key);
+    const tabs = this.model.tabs(), questionAt = tabs.findIndex((tab) => tab.key === current.tab.key && tab.incarnation === current.tab.incarnation);
+    const count = tabs.length + Number(this.chatAvailable), at = this.chatAvailable && this.chatFocused ? tabs.length : questionAt;
     const label = (index: number) => {
+      if (index === tabs.length) return `${index === at ? '›' : ''}[Chat]`;
       const tab = tabs[index], mode = tab.mode === 'blocking' ? 'Ask' : 'Async';
       const title = tab.review ? 'review' : tab.header ? truncateToWidth(readable(tab.header).replace(/\s+/gu, ' ').trim(), 24, '') : String(index + 1);
       return `${index === at ? '›' : ''}[${mode} ${title}]`;
     };
     let left = at, right = at, text = label(at);
-    while (left > 0 || right < tabs.length - 1) {
+    while (left > 0 || right < count - 1) {
       const nextLeft = left > 0 ? label(left - 1) + ' ' + text : undefined;
       if (nextLeft && visibleWidth(nextLeft) <= width) { text = nextLeft; left--; continue; }
-      const nextRight = right < tabs.length - 1 ? text + ' ' + label(right + 1) : undefined;
+      const nextRight = right < count - 1 ? text + ' ' + label(right + 1) : undefined;
       if (nextRight && visibleWidth(nextRight) <= width) { text = nextRight; right++; continue; }
       break;
     }
@@ -70,7 +77,12 @@ export class QuestionView {
     if (!current) return { header: [], lines: [], focus: [0, 1], footer: '' };
     const wrap = (text: unknown) => new Text(readable(text), 0, 0).render(width);
     const header = [this.tabs(width, current)];
-    const footer = this.theme.fg('dim', truncateToWidth(`${current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? 'Alt+N notes · ' : ''}Tab tabs · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel'}`, width, ''));
+    const questionNavigation = this.chatAvailable ? 'Tab/Shift+Tab questions/Chat' : 'Tab tabs';
+    const questionFooter = `${current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? 'Alt+N notes · ' : ''}${questionNavigation} · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel'}`;
+    const chatFooter = this.chatReturnKey
+      ? `Chat editor · native keys · ${this.chatReturnKey} returns to questions${this.chatAvailable ? ' · empty Tab/Shift+Tab navigates' : ''}`
+      : 'Chat editor · native keys';
+    const footer = this.theme.fg('dim', truncateToWidth(this.chatFocused ? chatFooter : questionFooter, width, ''));
     if (current.error || current.saving) header.push(this.theme.fg('warning', truncateToWidth(current.saving ? 'Saving answer…' : current.errorCode === 'storage_unconfirmed' ? 'Storage unconfirmed · PgDn details' : 'Save failed · draft retained · PgDn details', width, '')));
     if (current.paused) return { header, lines: wrap('Paused; this question remains pending. /asks resumes it.'), focus: [0, 1], footer };
     if (current.tab.review) {

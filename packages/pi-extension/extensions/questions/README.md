@@ -10,11 +10,15 @@ This is a fresh implementation. The existing questionnaire informed the experien
 
 Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane.
 
+In the conversation stream, cyan question cards and violet reply cards use authored titles and identity-based references to connect each exchange. Literal role labels remain readable without color. Operational echoes stay compact; expanding reveals full literal text and structured reply details. “Private” describes the Pi-local audience, not encryption, retention or delivery confirmation; warning/error colors describe actual reported failures rather than the asking or answering role.
+
 The public `index.ts` also exposes the model, view, inline host, blocking producer and domain types for independent consumers. The host accepts question groups: blocking callers await their own outcome, while an async source owns saving through its commit callback. Completion of that callback means persistence, not AI consumption. Question/option indices retain authored identity even when labels duplicate or tabs reorder.
 
 ## Interaction and ownership
 
-Tabs navigate individual questions and group-local review. Partial blocking submission retains live checks and notes; cancel affects only that group. Notes use Alt+N where supported, not printable `n`. Our native async source does not offer notes because its persisted answer contract is reply text and optional chosen-option identity.
+Tab/Shift+Tab navigate individual questions, group-local review and an explicit Chat stop. In Chat, they return to questions only while the editor is empty and no autocomplete is showing; with a draft or completion menu, native completion and thinking-level keys remain unchanged. Ctrl+] returns to the selected question without rewriting the Chat draft. Chat is offered only when public editor inspection and terminal-input hooks support safe reentry; disabling the configured collapse/reentry key also removes the Chat stop. Up/Down retain their choice/text behavior.
+
+Partial blocking submission retains live checks and notes; cancel affects only that group. Notes use Alt+N where supported, not printable `n`. Our native async source does not offer notes because its persisted answer contract is reply text and optional chosen-option identity.
 
 Escape pauses async questions without declining them. `/asks` reopens pending native questions. Collapsing gives the ordinary editor its focus and preserves question drafts. It requires the public terminal-input hook for reopening from that editor; hosts without it keep the question expanded and can still pause it. Configured SDK external-editor actions edit the original field through a private temporary file, restore the TUI and sanitize the replacement. UI detachment, shutdown and tool abort are not human Cancel.
 

@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+import http from 'node:http';import https from 'node:https';import net from 'node:net';import {syncBuiltinESMExports} from 'node:module';
+const [root,sdk]=process.argv.slice(2);let network=0;const forbidden=()=>{network++;throw new Error('TEST private stream rendering may not start networking');};globalThis.fetch=forbidden;for(const module of[http,https])for(const key of['request','get'])module[key]=forbidden;net.Socket.prototype.connect=forbidden;syncBuiltinESMExports();
+const host=path=>import(pathToFileURL(resolve(sdk,path)).href);
+const {loadExtensions}=await host('dist/core/extensions/loader.js');const themes=await host('dist/modes/interactive/theme/theme.js');themes.initTheme('dark',false);
+const fixture=process.env.THREADROOM_QUESTIONS_STREAM_FIXTURE||resolve(root,'packages/pi-extension/fixtures/questions-stream-proof.ts');const loaded=await loadExtensions([fixture],root);assert.deepEqual(loaded.errors,[]);
+const extension=loaded.extensions[0];const result=await extension.tools.get('TEST_questions_stream_proof').definition.execute('TEST-stream-proof',{},undefined,()=>{},{mode:'tui',hasUI:true,cwd:root,ui:{theme:themes.theme,testBlockingTool:extension.tools.get('ask_user_question').definition,testAsyncTool:extension.tools.get('ask_user_question_async').definition}});
+assert.equal(network,0);console.log(JSON.stringify({...result.details,networkAttempts:network},null,2));

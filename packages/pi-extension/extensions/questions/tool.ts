@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { truncateHead } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { QuestionAnswer, QuestionGroup, QuestionResult } from './types.ts';
+import { renderBlockingAskCall, renderBlockingAskResult } from './stream.ts';
 
 /** TUI presentation owns interaction; rejection means no human cancellation result. */
 export type QuestionPresenter = (
@@ -161,6 +162,9 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
     promptSnippet: 'Ask private questions when an answer is needed before continuing',
     promptGuidelines: ['Use ask_user_question for decisions needed to continue; ask_user_question_async lets independent work continue while an answer is pending.'],
     parameters,
+    renderShell: 'self',
+    renderCall: renderBlockingAskCall,
+    renderResult: renderBlockingAskResult,
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       if (retired) throw failure('presentation_detached', 'Question producer belongs to a retired session.');
       const controller = new AbortController();
