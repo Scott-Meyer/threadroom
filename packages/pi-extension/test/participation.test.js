@@ -197,10 +197,16 @@ test('service disconnect/restart catches up, and an ambiguous saved write is rec
 });
 
 test('a still-live participant reconnects to a restarted service and receives the missed response', { timeout: 15000 }, async (t) => {
-  const host = await service(t); const disconnected = deferred(), caughtUp = deferred();
+  const host = await service(t); const live = deferred(), disconnected = deferred(), caughtUp = deferred();
   const room = participant(t, host.client, { deliver: (receipt) => caughtUp.resolve(receipt),
-    connection: (state) => { if (state.status === 'reconnecting') disconnected.resolve(); } });
+    connection: (state) => {
+      if (state.status === 'live') live.resolve();
+      if (state.status === 'reconnecting') disconnected.resolve();
+    } });
   const asked = await room.publish({ question: 'Survive a service restart?' });
+  // Publication starts the stream asynchronously. Establish it before stopping
+  // the service so this promises reconnection, not an initial-connect retry.
+  await live.promise;
   await host.stop(); await disconnected.promise; await host.start();
   const saved = await host.client.respond(asked.node.id, { body: 'Recovered through replay.', author: human });
   assert.equal((await caughtUp.promise).responseId, saved.responseId);

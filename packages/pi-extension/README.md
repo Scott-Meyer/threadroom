@@ -33,6 +33,8 @@ The experimental `THREADROOM_REPLACE_ASK` API alias has been retired. Threadroom
 
 The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
+Shared tools currently use the host's built-in `fetch`. On macOS, Node 24.18.0/Undici 7.28.0 has a [known socket-QoS crash](https://github.com/nodejs/undici/issues/5544) that can terminate Pi outside the fetch promise; isolated Node 24.21.0/Undici 7.29.1 still has the vulnerable call. A passing reconnect check does not remove this runtime risk. A fixed, scoped HTTP transport remains a follow-up; this beta does not replace global fetch or suppress process exceptions. Native asks do not make HTTP requests.
+
 ## Participation
 
 `threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. It is a separate shared capability, not an emulator of the native questionnaire schema.
