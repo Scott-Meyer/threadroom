@@ -16,7 +16,9 @@ The public `index.ts` also exposes the model, view, inline host, blocking produc
 
 ## Interaction and ownership
 
-Tab/Shift+Tab navigate individual questions, group-local review and an explicit Chat stop. In Chat, they return to questions only while the editor is empty and no autocomplete is showing; with a draft or completion menu, native completion and thinking-level keys remain unchanged. Ctrl+] returns to the selected question without rewriting the Chat draft. Chat is offered only when public editor inspection and terminal-input hooks support safe reentry; disabling the configured collapse/reentry key also removes the Chat stop. Up/Down retain their choice/text behavior.
+Chat is a fixed home anchor on the left, separated from the question tabs. Ctrl+Tab/Ctrl+Shift+Tab cycle through Chat, individual questions and group-local review in the displayed order. Chat always keeps native Tab completion and Shift+Tab thinking controls, even when empty; Tab/Shift+Tab inside the question panel remain question-local. Up/Down retain their choice/text behavior.
+
+Global cycling requires the public terminal-input hook and a mounted public editor. `cycleKeys` configures the forward/reverse shortcuts independently of the optional collapse/reentry key; disabling collapse does not remove a supported Chat cycle route. Terminals must report shortcut modifiers distinctly—there is no fallback that steals ordinary Tab. Ctrl+] remains the default collapse/reentry shortcut and preserves both Chat and question drafts.
 
 Partial blocking submission retains live checks and notes; cancel affects only that group. Notes use Alt+N where supported, not printable `n`. Our native async source does not offer notes because its persisted answer contract is reply text and optional chosen-option identity.
 
