@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;background:#14211f;color:#dcebe3;font:13px system-ui,sans-serif}.board{display:grid;grid-template-columns:1fr 215px;gap:20px;padding:20px}.eyebrow{color:#819d8e;font-size:9px;letter-spacing:2px;text-transform:uppercase}h1{font:23px Georgia,serif;margin:7px 0 15px}canvas{width:100%;max-height:240px;object-fit:contain;background:#14211f;border-radius:8px;border:1px solid #2a4038}label{display:block;margin:14px 0;color:#b5cdbd;font-size:11px}input{display:block;width:100%;margin-top:6px;accent-color:#8ec79f}button{width:100%;border:1px solid #476b57;border-radius:6px;background:#213e2e;color:#d8efde;padding:8px;font-size:11px;cursor:pointer;margin-top:8px}button.primary{background:#b8dbc0;color:#193922;border-color:#b8dbc0;font-weight:600}.note{color:#799d85;font-size:10px;line-height:1.6}#receipt{color:#c7deb9;font-size:10px;min-height:20px;margin-top:10px}@media(max-width:580px){.board{grid-template-columns:1fr;padding:13px}.controls{display:grid;grid-template-columns:1fr 1fr;gap:9px}h1{font-size:20px}label{margin:4px 0}}
+</style></head><body><div class="board"><section><div class="eyebrow">AI-authored procedural study · illustrative demo</div><h1>Make the mist feel alive</h1><canvas id="art" width="480" height="260" aria-label="Generated creature silhouette"></canvas></section><section class="controls"><label>Silhouette spread<input id="spread" type="range" min="18" max="90" value="53"></label><label>Restless edges<input id="restless" type="range" min="2" max="30" value="13"></label><button id="generate">Generate another study ↻</button><button class="primary" id="propose">Propose this study ↓</button><p class="note">Explore freely. This canvas cannot save an answer.<br>Use Threadroom’s response controls below to submit or reject.</p><div id="receipt"></div></section></div><script>
+let seed=41;
+const art=document.getElementById('art'),ctx=art.getContext('2d'),spread=document.getElementById('spread'),restless=document.getElementById('restless');
+function random(i){let v=Math.sin(seed*31+i*172.17)*43758.5453;return v-Math.floor(v)}
+function draw(){
+  let w=art.width,h=art.height,s=Number(spread.value),r=Number(restless.value),x=w*.48,y=h*.54;
+  ctx.clearRect(0,0,w,h);let bg=ctx.createRadialGradient(x,y,10,x,y,w*.65);bg.addColorStop(0,'#304941');bg.addColorStop(1,'#111d1c');ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#5a8472';ctx.lineWidth=1;
+  for(let i=0;i<12;i++){let a=i*Math.PI*2/12,ox=Math.cos(a),oy=Math.sin(a);ctx.beginPath();ctx.moveTo(x+ox*s*.6,y+oy*s*.55);ctx.bezierCurveTo(x+ox*(s+35)+random(i)*r,y+oy*(s+10)+random(i+1)*r,x+ox*(s+65),y+oy*(s+55),x+ox*(s+85+random(i+2)*r),y+oy*(s+25));ctx.stroke()}
+  ctx.fillStyle='#142b25';ctx.strokeStyle='#b7d7be';ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<=90;i++){let a=i*Math.PI*2/90,rad=s+Math.sin(a*5+seed)*r*.7,px=x+Math.cos(a)*rad*1.5,py=y+Math.sin(a)*rad*.65;if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py)}ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='#daead0';ctx.beginPath();ctx.arc(x+s*.6,y-8,3,0,Math.PI*2);ctx.arc(x+s*.83,y-4,2,0,Math.PI*2);ctx.fill();
+  ctx.font='10px system-ui';ctx.fillStyle='#719b84';ctx.fillText('STUDY '+seed+'  /  SPREAD '+s+'  /  EDGE '+r,16,h-17);
+}
+spread.addEventListener('input',draw);restless.addEventListener('input',draw);document.getElementById('generate').onclick=()=>{seed++;draw();document.getElementById('receipt').textContent='A new local image—not submitted.'};
+document.getElementById('propose').onclick=()=>{let preview=document.createElement('canvas');preview.width=240;preview.height=130;preview.getContext('2d').drawImage(art,0,0,240,130);window.Threadroom.propose({seed,spread:Number(spread.value),restless:Number(restless.value),image:preview.toDataURL('image/png')},'Generated study '+seed+' · spread '+spread.value+' · restless edges '+restless.value);document.getElementById('receipt').textContent='Proposed below. Save or reject in Threadroom.'};draw();
+</script></body></html>

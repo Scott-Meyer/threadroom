@@ -1,100 +1,147 @@
-# Threadroom HTTP API — local spike
+# Threadroom API — recursive, UI-independent local spike
 
-Base URL: `http://127.0.0.1:4310`. Requests and results are JSON. This first contract is unauthenticated and for local single-user use only.
+Base URL: `http://127.0.0.1:4310`. JSON over HTTP; SSE for live updates. Single-user and unauthenticated for now.
 
-## Publish a review
+## Normal questions and replies
+
+Using the rendering-independent client in `public/client.js`:
+
+```js
+const room = new ThreadroomClient('http://127.0.0.1:4310');
+const asked = await room.ask({ project: 'MistFall', question: 'Which direction?' });
+await room.reply(asked.node.id, { body: 'Keep the wide silhouette.' });
+const discussion = await room.read(asked.node.id); // content + replies in children
+```
+
+`project` names an ordinary parent; optional `thread` names a conversation inside it. Both are conveniences for resolving a path, not node types. No tree-building calls or type flags are needed. Leave the project out for an unscoped question. Replies are ordinary nodes too, so discussions can deepen when useful.
+
+## Ask at any depth in one call
 
 ```sh
-curl -s http://127.0.0.1:4310/api/threads \
+curl -s http://127.0.0.1:4310/api/ask \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: trail-review-1' \
   -d '{
-    "title": "Lantern interaction",
-    "project": "MistFall",
-    "author": {"name": "UI teammate", "role": "Interaction designer"},
-    "summary": "First pickup should feel different from later pickups.",
-    "question": {
-      "prompt": "Should the first lantern pickup pause for a breath?",
-      "context": "Both animation timings are ready to try.",
-      "presentation": {
-        "kind": "text-v1",
-        "revision": "pickup-r1",
-        "choices": ["Immediate", "Pause once, then immediate"]
-      }
-    }
+    "path": ["MistFall", "Creatures", "Mist creature", "Movement"],
+    "question": "Should the trail linger?",
+    "choices": ["Briefly", "Until it turns"],
+    "author": {"name": "Artist"}
   }'
 ```
 
-Returns `201` with `{ "thread": ... }`. A thread carries stable `id`, `project`, author, timestamps, counts, and full questions. Each question carries its own ID, status, prompt, context, captured presentation/revision, and responses. `questions: [...]` can replace `question` to publish several related questions together.
+The backend resolves or creates the entire path and publishes the leaf atomically. No prior lookup/create turns are needed. `path` names the ancestors, not the leaf; use an array so titles can contain slashes. Duplicate same-titled siblings make a path ambiguous (`409`), rather than silently choosing one.
 
-The website address is `/threads/{thread.id}`. Publishing does not wait for a human answer.
+Returns `201` with `{node, ancestors, children, counts, url, createdAncestorIds, deduplicated}`. The result carries stable leaf/ancestor identities, saved content, status, and resolved context. A website may use the `/threads/{node.id}` convenience address; another UI can use its own navigation.
 
-### Image comparisons
+A known **`parentId`** replaces `path`, including the ID of an answer. This is the same ordinary publish capability at every depth. Retrying unchanged content with the same idempotency key returns the saved result (`200`); changing content with that key returns `409`.
 
-A convenience presentation uses `kind: "comparison-v1"` and `options` containing `{ id, label, detail, image, alt }`. The included images are available under `/assets/`. This is one renderer, not the conversation schema: other presentation kinds can be retained as records and currently show a fallback. No custom scripts are executed.
+### Cheap conveniences, not mandatory schemas
 
-## Read and browse
+- `question: "..."`: shorthand for a title with `expectsAnswer: true`.
+- `choices: ["..."]`: optional suggested choices; `multiple: true` allows several.
+- `context` or `body`: freeform written content.
+- `project: "MistFall"`, optionally `thread: "Movement"`: familiar scope names, equivalent to `path: ["MistFall", "Movement"]`. Choose these, `path`, or `parentId`, rather than mixing locators.
+- `title`: ordinary node content; `expectsAnswer: true` optionally requests an answer.
 
-```sh
-curl -s http://127.0.0.1:4310/api/threads/thr_mist-creature
-curl -s 'http://127.0.0.1:4310/api/threads?view=needs-answer'
-curl -s 'http://127.0.0.1:4310/api/threads?view=history'
+`POST /api/nodes` is the same publication boundary. There is one node shape, with no node `kind`. Every node can have children, authored content, response context, and an answer request. Omitting `path` and `parentId` places it at the top of the outline, not in a special category.
+
+## Authored questions and answers
+
+```json
+{
+  "path": ["MistFall", "Art", "Experiments"],
+  "question": "Try this interaction and tell me what feels right",
+  "html": "<h1>My own scene</h1><canvas id='art'></canvas><script>/* any self-contained interaction */</script>",
+  "fallback": "A readable explanation of what this scene shows and asks.",
+  "revision": "scene-r1"
+}
 ```
 
-A read returns `{ thread }`. Browse returns `{ threads: [...] }` with bounded per-thread summaries/counts. Views: `needs-answer`, `waiting-on-team`, `deferred`, or `history` (all threads).
+Or provide `presentation: {kind: "html-v1", html, fallback, revision}`. The exact authored document is captured durably. Images/resources can be self-contained data URIs. The comparison convenience renderer also captures included `/assets/` image references into the record at publication, rather than leaving history dependent on mutable source files.
 
-## Respond
+The document runs in a sandbox with a small proposal bridge:
+
+```js
+window.Threadroom.propose(
+  {variant: 'B', proportions: 0.7},
+  'Variant B with narrower proportions'
+);
+```
+
+This proposes a **draft**, never an answer. The host displays it separately; only its own Save button records feedback. Proposals carry arbitrary semantic JSON plus a readable summary (64 KiB maximum). Canvas-generated image snapshots can travel as data URI values. The dependable text-answer/reject-with-reason controls remain outside the document.
+
+Text/select (`text-v1`) and image comparisons (`comparison-v1`) are convenience renderers, not a finite limit on presentation design. Unsupported kinds retain their data and show a readable fallback. `GET /api/nodes/{id}/presentation` serves the captured authored document with sandbox/CSP headers; `GET /api/nodes/{id}` always returns the readable record.
+
+The opaque sandbox has no ambient host DOM, model credentials, filesystem, or fetch capability. See README for isolation limits; arbitrary external effects would need explicit backend capabilities.
+
+## Read the tree or a node
 
 ```sh
-curl -s http://127.0.0.1:4310/api/questions/QUESTION_ID/responses \
+curl -s http://127.0.0.1:4310/api/tree
+curl -s http://127.0.0.1:4310/api/nodes/NODE_ID
+```
+
+Tree returns `{nodes: [...]}` with structural summaries: `id`, `parentId`, title, `expectsAnswer`/status, author, timestamps, response intent, and whether a presentation exists. It currently returns the whole outline without a depth cap.
+
+Read returns `{node, ancestors, children, counts, url}`. Children are direct children; each can be read/zoomed independently. A node carries body, captured presentation, and optional response identity/context. Counts cover the subtree. There is no fixed project → thread → question level.
+
+## Respond; the saved result is another node
+
+```sh
+curl -s http://127.0.0.1:4310/api/nodes/NODE_ID/respond \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: unique-response-attempt-id' \
+  -H 'Idempotency-Key: human-response-1' \
   -d '{
-    "kind": "answer",
-    "body": "Pause on the first pickup only. Keep later interactions quick.",
+    "body": "Keep the wide silhouette, but soften the movement.",
     "author": {"name": "Scott"},
-    "selections": [{"id": "pause-once", "label": "Pause once, then immediate"}]
+    "selections": [{"id": "study", "label": "Wide silhouette", "value": {"spread": 72}}]
   }'
 ```
 
-Returns `{ thread, responseId, deduplicated }`. The saved response carries written feedback, labeled selections, author, timestamp, question identity, and presentation revision. Repeating the same key for the same response recovers the existing response (`200` instead of `201`); using it for different content or a different question returns `409`. Other write operations do not yet offer retry deduplication.
+The default response intent is `answer`; ordinary replies only need `body`. Returns the saved response’s node/context plus `responseId`, `target`, and `deduplicated`. A response captures the target presentation revision, written content, labeled values, and author/time. It becomes a child of the target node. Any later thread can use that response ID as `parentId`.
 
-`kind` determines the targeted question’s state:
+Responses may also provide their own `presentation: {kind: "html-v1", html, fallback}`. Question and answer surfaces share the authored-presentation boundary.
 
-| Kind | Question state | Meaning |
+| Response intent | Target answer-request state | Meaning |
 | --- | --- | --- |
-| `answer` | `answered` | Input provided; does not answer other questions. |
-| `clarification` | `waiting_on_team` | Human asked back; not approval. |
-| `defer` | `deferred` | Intentionally postponed, still recoverable. |
-| `reject` | `rejected` | Request/direction rejected, not selected. |
-| `team_reply` | `outstanding` | Team addressed an ask-back; human input is requested again. |
+| `answer` | `answered` | Input given; sibling questions are unaffected. |
+| `clarification` | `waiting_on_team` | Human asked back, not approval. |
+| `defer` | `deferred` | Intentionally postponed; later responses remain possible. |
+| `reject` | `rejected` | Rejected with written reason. |
+| `team_reply` | `outstanding` | Team addressed an ask-back and requests input again. |
 
-Answers need text or a selection. Clarification, rejection, and team replies need written context; deferral can be empty. Earlier responses remain in the record. Display names are not authenticated identities in this spike.
+Rejection, clarification, and team reply need written context. Answers need text, values, or an authored presentation; deferral can be empty. `team_reply` explicitly targets a waiting-on-team request; adding unrelated children never clears that responsibility. The response payload's `kind` describes the action, not a node type. A response can also set `expectsAnswer: true`: saved response context and an answer request can coexist on the same node. Responding to a node without an answer request records discussion without inventing one. Earlier responses remain readable.
 
-A teammate uses the same response endpoint with `kind: "team_reply"`, written `body`, and its own author label. This explicitly targets a question `waiting_on_team` and returns it to the human’s answer queue. Adding an unrelated follow-up does not clear the team’s responsibility.
+## Optionally block the normal question call
 
-## Add a same-thread follow-up
+Add `wait: {timeoutMs: 120000}` to **the same `/api/ask` call**. Publication is durable immediately; the HTTP response remains open until a human answers/rejects/asks back/defers or the timeout expires.
 
-```sh
-curl -s http://127.0.0.1:4310/api/threads/THREAD_ID/questions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "prompt": "Follow-up: should the lantern light bloom before the pickup completes?",
-    "context": "The original timing feedback remains below this new question.",
-    "presentation": {"kind": "text-v1", "revision": "bloom-r1"}
-  }'
+```json
+{
+  "published": {"node": {}, "ancestors": [], "url": "/threads/..."},
+  "outcome": "answer",
+  "response": {"id": "node_...", "body": "...", "response": {}},
+  "timedOut": false
+}
 ```
 
-Returns `201` with `{ thread }`. The new question has independent `outstanding` state. It does not replace the original presentation or answer.
+Timeout returns `outcome: "pending"`, `response: null`, `timedOut: true`, with the saved publication context. Maximum wait is 120 seconds per connection. Client abort/disconnect only releases the waiter. The question and any later response remain recoverable. Retry with the same publish key to recover the existing question and wait again; an already-present current-turn human response returns immediately. A subsequent team reply reopening the question does not cause a waiter to consume the prior human turn again.
 
-## Catch up on saved events
+## Live updates and reconnect catch-up
 
 ```sh
+curl -N 'http://127.0.0.1:4310/api/stream?after=0'
 curl -s 'http://127.0.0.1:4310/api/events?after=0'
-# Optional: &threadId=THREAD_ID
 ```
 
-Returns `{ events: [...] }`, at most 100 at a time. Each event has stable `id`, increasing `sequence`, `threadId`, type, payload, and timestamp. Advance `after` to the last received sequence. Thread creation, follow-up creation, and response creation are recorded atomically with their domain write. This is catch-up, **not live notification delivery**.
+SSE sends `event: change`, `id: <sequence>`, and `data: <full durable event JSON>`. Events have stable ID, increasing sequence, type, affected identity/context, and timestamp. They become visible only after the associated domain write commits. Reconnect with `Last-Event-ID` or `after` to replay missed events. `/api/events` returns up to 100 at a time; advance to the last sequence. SSE drains replay pages and then listens for committed changes.
 
-## Failure contract
+Subscriptions/waits are live transport, not the only copy of a response. No Pi session or website owns persistence. Notification acknowledgements/exactly-once external actions are not claimed.
 
-Invalid inputs return `400`; cross-origin browser writes return `403`; missing records return `404`; mismatched idempotency retries return `409`; oversized JSON bodies return `413`. Failure results carry `{ error }`. A connection loss is ambiguous, so response clients can retry with the same idempotency key. If the service is unavailable, no other authoritative store is silently created.
+## Independent UIs and failures
+
+The API does not require or import a website. Optional static hosting is injected by the launcher. `public/client.js` is a rendering-independent HTTP client. Separately hosted browser UIs need their origin listed in `THREADROOM_UI_ORIGINS`; localhost/127.0.0.1 port4311 is permitted by default. CORS/preflight is explicit, and unrelated browser writes fail safely.
+
+`400`: invalid input; `403`: disallowed browser write origin; `404`: missing record; `409`: ambiguous path or mismatched idempotency key; `413`: JSON body exceeds 5 MB. Failures carry `{error}`. A lost connection is ambiguous: reuse the same key for unchanged publication/response content. No alternate authoritative store is created when disconnected.
+
+The initial `/api/threads` and `/api/questions/{id}/responses` endpoints remain adapters over the same recursive records, so the first-spike clients and retry receipts still work. New clients use `/api/nodes`, `/api/ask`, and `/api/stream`.

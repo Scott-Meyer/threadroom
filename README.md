@@ -1,40 +1,58 @@
 # Threadroom
 
-A lasting place for questions, visual reviews, answers, and follow-ups between people and AI teammates. The conversation stays readable after the original session is gone.
+A lasting, recursively nestable place for people and AI teammates to bring work, ask questions, answer, and branch the discussion—even from an answer. The conversation outlives the session that started it.
 
-## Try the first spike
+## Run it
 
-Requires **Node 24+**. No packages or external services to install.
-
-```sh
-npm start
-# http://127.0.0.1:4310
-```
-
-Open the Mist creature review, pick a silhouette or ignore the offered choices, and write a response. **Ask back**, **Defer**, and **Reject** are distinct from answering. Add a **Follow-up** to the same thread, then open **All history** to revisit what was shown and saved.
-
-The initial art, authors, and fog conversation are illustrative demo content. New reviews and responses go through the same HTTP API a programmatic client uses.
-
-## What persists
-
-Records live in `data/threadroom.sqlite`; questions capture their presentation and revision, and each response retains its association to that question/revision. Restarting the process does not reset the discussion. The demo is seeded only into an empty database.
-
-`THREADROOM_DB`, `PORT`, and `HOST` override the defaults. `npm run dev` restarts the server when source changes. The server is independent of Pi and FlightDeck, but the current **local host must be awake and the process running**. There is no offline write queue or alternate private store.
-
-## Public boundary
-
-See [API.md](API.md) for publish, read, respond, follow-up, and event-catch-up examples. A generic HTTP client can retrieve the complete saved question, presentation, and responses.
+Requires **Node 24+**, with no packages to install.
 
 ```sh
-npm test
+# Separate processes: the website is just an HTTP API client.
+npm run api  # http://127.0.0.1:4310
+npm run ui   # http://127.0.0.1:4311
 ```
 
-The consumer-boundary check publishes two questions through HTTP, answers one, retries without duplication, restarts the service, and recovers the presentation and answer with the other question still outstanding.
+Or `npm start` serves the API and website together on `4310` for convenience. The backend doesn't require the website. Multiple UIs can consume the same records without database access.
 
-## Deliberate spike limits
+## Try the direction
 
-This is loopback-only, single-user software **without authentication or project permissions**. Display names are labels, not verified identities; do not expose it publicly yet. The GitHub repository is private.
+The outline follows [Workflowy's expand/zoom distinction](https://workflowy.com/help/navigate-around): chevrons expand children; bullets zoom into a branch; breadcrumbs navigate back. Everything is the same node—no root/project/question/answer node types. A node may ask for an answer, carry saved response context, or do both. Placement only records its parent. **Branch here** works at any depth.
 
-Presentations currently support text and an image-comparison convenience format. Unknown presentation kinds fall back to the reliable response path. Arbitrary authored executable UI, asset upload/access policy, live subscriptions, notification delivery, and Pi/FlightDeck adapters are not implemented. The presentation kind/revision boundary is intentionally separate from conversation records rather than a commitment to a fixed form grammar.
+```sh
+node examples/publish-canvas.js
+```
 
-The included images are durable repository assets, not transient artist files. Google Fonts are optional visual enhancement; system fallbacks work without them. Browser drafts keep written text locally, but attachments and cross-browser draft recovery are not available yet.
+This makes one API call to resolve/create `MistFall → Creatures → Mist creature → Procedural studies`, publish a question, and capture its authored interactive document. Tune/generate an illustrative image, propose it, then save written feedback or reject through the separate Threadroom controls. Saved parameters and PNG snapshot remain readable without running the canvas. Questions **and answers** can carry authored canvases.
+
+The MistFall art, authors, fog discussion, and explicitly marked browser-check responses are demo content, not real team approvals. The Threadroom feedback request is a real question for Scott.
+
+## Backend contract
+
+Ordinary use stays ordinary: `room.ask({project: 'MistFall', question: 'Which direction?'})`, then `room.reply(questionId, {body: 'Keep the wide silhouette.'})`. Project/conversation names are conveniences, not fixed tiers. Deeper `path` or `parentId` addressing is there when needed.
+
+[API.md](API.md) covers one-call deep publication, reads, responses, event subscriptions, catch-up, and optional blocking asks. A question can return immediately or keep its HTTP call open until a human responds. Timeout/cancellation releases the waiter, not the question.
+
+Records and captured presentation content live in `data/threadroom.sqlite`. Restarting either UI or API does not erase them. The first-spike records migrate to recursive nodes with their IDs, presentations, responses, and retry receipts preserved. No offline writes or divergent fallback store are invented when the backend is unavailable.
+
+Useful configuration:
+
+- `THREADROOM_DB`, `PORT`, `HOST`: backend defaults are `data/threadroom.sqlite`, `4310`, and loopback.
+- `THREADROOM_SERVE_UI=0`: API-only process (`npm run api` sets this).
+- `THREADROOM_API_URL`, `UI_PORT`: independent website defaults are API `http://127.0.0.1:4310` and UI port `4311`.
+- `THREADROOM_UI_ORIGINS`: comma-separated allowed browser origins. Defaults permit the independent localhost/127.0.0.1 UI on `4311`; configure this when adding another UI.
+
+The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. The current host still needs to be awake and both chosen processes need to run.
+
+## Evidence
+
+`npm test` exercises the public HTTP boundary: restart recovery, independent question state, response retries, clarification/team-reply lifecycle, one-call 25-deep nesting, branching from an answer, mixed request/response capabilities on the same node, live delivery to a blocking ask, timeout recovery, first-spike and typed-spike migration, and an independently hosted UI/API pair with authored question/answer records.
+
+Actual-browser evidence additionally includes the image generator, proposal-versus-save distinction, a captured generated snapshot, and a question branched directly from the saved answer.
+
+## Spike limits
+
+This is **local single-user software without authentication or permissions**. Author names are labels, not verified identities. The GitHub repo is private; don't expose the service publicly yet.
+
+Authored HTML/CSS/JS runs in an opaque sandbox. It can propose semantic JSON to the host, not submit an answer or access host DOM/credentials. CSP restricts fetches, forms, external resources, and workers; the embedding UI restricts frame destinations. This is not hard CPU/process isolation. Readable fallback and host text-answer/reject controls remain outside authored content. Model/image-generation services would require explicit capabilities, not ambient credentials; the demo generates images procedurally in its own canvas.
+
+The tree supports arbitrary nesting but currently loads the whole outline; large-tree paging, moves/edits/deletion, production access control/hosting, notification acknowledgements, and Pi/FlightDeck adapters remain future work. Browser drafts retain text, proposed values, authored reply source, and retry keys locally. Google Fonts are optional; system fallbacks work offline.

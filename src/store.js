@@ -1,53 +1,40 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
+import { randomUUID, createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { EventEmitter } from 'node:events';
 
 const now = () => new Date().toISOString();
-const asJson = (value, fallback = null) => {
-  if (value == null) return fallback;
-  try { return JSON.parse(value); } catch { return fallback; }
-};
+const parse = (value, fallback = null) => value ? JSON.parse(value) : fallback;
+const fingerprint = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const assetsDir = fileURLToPath(new URL('../public/assets/', import.meta.url));
 
+// One node primitive. Requests, response context, and authored content are independent capabilities.
 export class ThreadStore {
   constructor(filename) {
+    this.changes = new EventEmitter();
+    this.changes.setMaxListeners(0);
     if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
     this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS threads (
+      CREATE TABLE IF NOT EXISTS nodes (
         id TEXT PRIMARY KEY,
+        parent_id TEXT REFERENCES nodes(id),
+        expects_answer INTEGER NOT NULL DEFAULT 0,
         title TEXT NOT NULL,
-        project TEXT NOT NULL,
-        summary TEXT NOT NULL DEFAULT '',
-        author_name TEXT NOT NULL,
-        author_role TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        author_json TEXT NOT NULL,
+        status TEXT,
+        presentation_json TEXT,
+        response_json TEXT,
+        idempotency_key TEXT UNIQUE,
+        request_hash TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS questions (
-        id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-        prompt TEXT NOT NULL,
-        context TEXT NOT NULL DEFAULT '',
-        presentation_kind TEXT NOT NULL DEFAULT 'text-v1',
-        presentation_revision TEXT NOT NULL,
-        presentation_json TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'outstanding',
-        created_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS responses (
-        id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-        question_id TEXT NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL,
-        body TEXT NOT NULL DEFAULT '',
-        selections_json TEXT NOT NULL DEFAULT '[]',
-        presentation_revision TEXT NOT NULL,
-        author_name TEXT NOT NULL,
-        idempotency_key TEXT UNIQUE,
-        created_at TEXT NOT NULL
-      );
+      CREATE INDEX IF NOT EXISTS nodes_parent_idx ON nodes(parent_id, created_at);
       CREATE TABLE IF NOT EXISTS events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
@@ -56,185 +43,169 @@ export class ThreadStore {
         payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS questions_thread_idx ON questions(thread_id, created_at);
-      CREATE INDEX IF NOT EXISTS responses_thread_idx ON responses(thread_id, created_at);
-      CREATE INDEX IF NOT EXISTS events_thread_idx ON events(thread_id, sequence);
     `);
+    this.#migrateNodeKinds();
+    this.#migrateLegacy();
   }
 
   close() { this.db.close(); }
 
-  createThread(input) {
-    const createdAt = now();
-    const threadId = input.id || `thr_${randomUUID()}`;
-    const questions = input.questions?.length ? input.questions : [input.question];
-    if (!input.title?.trim() || !input.project?.trim() || !questions[0]?.prompt?.trim()) {
-      throw new InputError('title, project, and at least one question prompt are required');
-    }
+  listNodes() {
+    return this.db.prepare('SELECT * FROM nodes ORDER BY created_at, rowid').all().map((row) => this.#node(row));
+  }
 
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.db.prepare(`INSERT INTO threads
-        (id, title, project, summary, author_name, author_role, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(threadId, input.title.trim(), input.project.trim(), input.summary?.trim() || '',
-          input.author?.name?.trim() || 'AI teammate', input.author?.role?.trim() || '', createdAt, createdAt);
-      const createdQuestions = questions.map((question) => this.#insertQuestion(threadId, question, createdAt));
-      this.#event('thread.created', threadId, { threadId, questionIds: createdQuestions.map(({ id }) => id) }, createdAt);
-      this.db.exec('COMMIT');
-      return this.getThread(threadId);
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
+  getNode(nodeId) {
+    const row = this.db.prepare('SELECT * FROM nodes WHERE id = ?').get(nodeId);
+    if (!row) throw new NotFoundError('node not found');
+    const node = this.#node(row);
+    const ancestors = [];
+    let parentId = row.parent_id;
+    while (parentId) {
+      const parent = this.db.prepare('SELECT * FROM nodes WHERE id = ?').get(parentId);
+      if (!parent) break;
+      // Navigation context stays bounded: don't echo every ancestor's HTML/images back to a publisher.
+      ancestors.unshift({ id: parent.id, parentId: parent.parent_id, title: parent.title,
+        author: parse(parent.author_json, {}), expectsAnswer: !!parent.expects_answer, status: parent.status });
+      parentId = parent.parent_id;
     }
+    const children = this.db.prepare('SELECT * FROM nodes WHERE parent_id = ? ORDER BY created_at, rowid').all(nodeId).map((child) => this.#node(child));
+    return { node, ancestors, children, counts: this.#counts(nodeId), url: `/threads/${nodeId}` };
+  }
+
+  createNode(input, key) {
+    const normalized = this.#normalizeInput(input);
+    const requestHash = fingerprint(normalized);
+    // Previously published receipts survive the removal of the structural kind field.
+    const { expectsAnswer, ...content } = normalized;
+    const oldHashes = (expectsAnswer ? ['question'] : ['thread', 'note'])
+      .map((kind) => fingerprint({ kind, ...content }));
+    const existing = this.#existing(key, requestHash, ...oldHashes);
+    if (existing) return { ...this.getNode(existing.id), createdAncestorIds: [], deduplicated: true };
+    let createdAncestorIds = [];
+    let id;
+    this.#atomic(() => {
+      let parentId = normalized.parentId || null;
+      if (normalized.path) {
+        const resolved = this.#resolvePath(normalized.path, normalized.author);
+        parentId = resolved.parentId;
+        createdAncestorIds = resolved.createdIds;
+      }
+      if (parentId) this.#require(parentId);
+      id = this.#insert({ ...normalized, presentation: normalized.presentation ? this.#presentation(normalized.presentation) : null, parentId, key, requestHash });
+      this.#event('node.created', id, { nodeId: id, parentId, createdAncestorIds });
+    });
+    return { ...this.getNode(id), createdAncestorIds, deduplicated: false };
+  }
+
+  respond(nodeId, input, key) {
+    const target = this.#require(nodeId);
+    const kind = input.kind || 'answer';
+    if (!['answer', 'clarification', 'defer', 'reject', 'team_reply'].includes(kind)) throw new InputError('invalid response kind');
+    const body = text(input.body, 'body', false);
+    const selections = Array.isArray(input.selections) ? input.selections : [];
+    if (kind !== 'defer' && !body && selections.length === 0 && !input.presentation) throw new InputError('a response needs feedback, a selection, or an authored presentation');
+    if (['clarification', 'reject', 'team_reply'].includes(kind) && !body) throw new InputError(`${kind} needs written context`);
+    const author = input.author || { name: kind === 'team_reply' ? 'AI teammate' : 'Scott' };
+    const expectsAnswer = answerRequest(input);
+    const requestedTitle = text(input.title, 'title', false);
+    const title = requestedTitle || body.split('\n')[0].slice(0, 100) || selections.map((selection) => selection.label || selection.id).join(', ') || (kind === 'defer' ? 'Deferred for later' : 'Authored response');
+    const content = { nodeId, kind, body, selections, author, presentation: input.presentation || null };
+    const normalized = { ...content, expectsAnswer, title };
+    const existing = this.#existing(key, fingerprint(normalized), fingerprint(content),
+      !expectsAnswer ? `legacy:${fingerprint({ nodeId, kind, body, selections })}` : null);
+    if (existing) {
+      if (!!existing.expects_answer !== expectsAnswer || (requestedTitle && existing.title !== title)) throw new ConflictError('Idempotency-Key was already used for different content');
+      return { ...this.getNode(existing.id), responseId: existing.id, deduplicated: true, target: this.#node(this.#require(nodeId)) };
+    }
+    if (kind === 'team_reply' && target.status !== 'waiting_on_team') throw new InputError('team_reply targets a question waiting on the team');
+    const nextStatus = { answer: 'answered', clarification: 'waiting_on_team', defer: 'deferred', reject: 'rejected', team_reply: 'outstanding' }[kind];
+    const revision = parse(target.presentation_json)?.revision || null;
+    let responseId;
+    this.#atomic(() => {
+      responseId = this.#insert({
+        parentId: nodeId, expectsAnswer,
+        title, body, author, presentation: input.presentation ? this.#presentation(input.presentation) : null,
+        response: { kind, selections, presentationRevision: revision, targetId: nodeId },
+        key, requestHash: fingerprint(normalized)
+      });
+      if (target.expects_answer) this.db.prepare('UPDATE nodes SET status = ?, updated_at = ? WHERE id = ?').run(nextStatus, now(), nodeId);
+      this.#event('response.created', this.#legacyThreadId(nodeId), { nodeId: responseId, parentId: nodeId, threadId: this.#legacyThreadId(nodeId), questionId: nodeId, responseId, kind, questionStatus: target.expects_answer ? nextStatus : null });
+    });
+    return { ...this.getNode(responseId), responseId, deduplicated: false, target: this.#node(this.#require(nodeId)) };
+  }
+
+  // First-spike adapters use the same authority. No project/question hierarchy is imposed on nodes.
+  createThread(input) {
+    const title = text(input.title, 'title');
+    const project = text(input.project, 'project');
+    const questions = input.questions?.length ? input.questions : [input.question];
+    for (const question of questions) text(question?.prompt, 'question prompt');
+    let id;
+    this.#atomic(() => {
+      const { parentId } = this.#resolvePath([project], input.author);
+      id = this.#insert({ id: input.id, title, parentId, body: input.summary || '', author: input.author });
+      const questionIds = questions.map((question) => this.#insert({
+        id: question.id, parentId: id, expectsAnswer: true, title: question.prompt, body: question.context || '',
+        author: input.author, presentation: this.#presentation(question.presentation || {})
+      }));
+      this.#event('thread.created', id, { threadId: id, questionIds });
+    });
+    return this.getThread(id);
   }
 
   addQuestion(threadId, input) {
-    const thread = this.db.prepare('SELECT id FROM threads WHERE id = ?').get(threadId);
-    if (!thread) throw new NotFoundError('thread not found');
-    if (!input.prompt?.trim()) throw new InputError('prompt is required');
-    const createdAt = now();
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const question = this.#insertQuestion(threadId, input, createdAt);
-      this.db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(createdAt, threadId);
-      this.#event('question.created', threadId, { threadId, questionId: question.id }, createdAt);
-      this.db.exec('COMMIT');
-      return this.getThread(threadId);
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+    this.#require(threadId);
+    text(input.prompt, 'prompt');
+    this.#atomic(() => {
+      const id = this.#insert({ id: input.id, parentId: threadId, expectsAnswer: true, title: input.prompt,
+        body: input.context || '', author: this.getNode(threadId).node.author, presentation: this.#presentation(input.presentation || {}) });
+      this.#event('question.created', threadId, { threadId, questionId: id });
+    });
+    return this.getThread(threadId);
   }
 
-  addResponse(questionId, input, idempotencyKey) {
-    const question = this.db.prepare('SELECT * FROM questions WHERE id = ?').get(questionId);
-    if (!question) throw new NotFoundError('question not found');
-    if (!['answer', 'clarification', 'defer', 'reject', 'team_reply'].includes(input.kind)) {
-      throw new InputError('kind must be answer, clarification, defer, reject, or team_reply');
-    }
-    const selections = Array.isArray(input.selections) ? input.selections : [];
-    const responseBody = input.body?.trim() || '';
-    if (input.kind !== 'defer' && !responseBody && selections.length === 0) {
-      throw new InputError('a response needs written feedback or a selection');
-    }
-    if (['clarification', 'reject', 'team_reply'].includes(input.kind) && !responseBody) {
-      throw new InputError(`${input.kind} needs written context`);
-    }
-    if (idempotencyKey) {
-      const existing = this.db.prepare('SELECT * FROM responses WHERE idempotency_key = ?').get(idempotencyKey);
-      if (existing) {
-        if (existing.question_id !== questionId || existing.kind !== input.kind || existing.body !== responseBody ||
-            existing.selections_json !== JSON.stringify(selections)) {
-          throw new ConflictError('Idempotency-Key was already used for a different response');
-        }
-        return { thread: this.getThread(existing.thread_id), responseId: existing.id, deduplicated: true };
-      }
-    }
-    if (input.kind === 'team_reply' && question.status !== 'waiting_on_team') {
-      throw new InputError('team_reply targets a question waiting on the team');
-    }
-
-    const createdAt = now();
-    const responseId = `rsp_${randomUUID()}`;
-    const nextStatus = {
-      answer: 'answered', clarification: 'waiting_on_team', defer: 'deferred', reject: 'rejected', team_reply: 'outstanding'
-    }[input.kind];
-
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.db.prepare(`INSERT INTO responses
-        (id, thread_id, question_id, kind, body, selections_json, presentation_revision, author_name, idempotency_key, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(responseId, question.thread_id, questionId, input.kind, input.body?.trim() || '', JSON.stringify(selections),
-          question.presentation_revision, input.author?.name?.trim() || (input.kind === 'team_reply' ? 'AI teammate' : 'Scott'), idempotencyKey || null, createdAt);
-      this.db.prepare('UPDATE questions SET status = ? WHERE id = ?').run(nextStatus, questionId);
-      this.db.prepare('UPDATE threads SET updated_at = ? WHERE id = ?').run(createdAt, question.thread_id);
-      this.#event('response.created', question.thread_id,
-        { threadId: question.thread_id, questionId, responseId, kind: input.kind, questionStatus: nextStatus }, createdAt);
-      this.db.exec('COMMIT');
-      return { thread: this.getThread(question.thread_id), responseId, deduplicated: false };
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+  addResponse(questionId, input, key) {
+    const result = this.respond(questionId, input, key);
+    return { thread: this.getThread(this.#legacyThreadId(questionId)), responseId: result.responseId, deduplicated: result.deduplicated };
   }
 
-  listThreads(view = 'inbox') {
-    const rows = this.db.prepare(`
-      SELECT t.*,
-        COUNT(q.id) AS question_count,
-        SUM(CASE WHEN q.status = 'outstanding' THEN 1 ELSE 0 END) AS outstanding_count,
-        SUM(CASE WHEN q.status = 'waiting_on_team' THEN 1 ELSE 0 END) AS team_count,
-        SUM(CASE WHEN q.status = 'deferred' THEN 1 ELSE 0 END) AS deferred_count,
-        (SELECT q2.prompt FROM questions q2 WHERE q2.thread_id = t.id ORDER BY q2.created_at DESC LIMIT 1) AS latest_prompt
-      FROM threads t LEFT JOIN questions q ON q.thread_id = t.id
-      GROUP BY t.id ORDER BY t.updated_at DESC`).all();
-    const items = rows.map(this.#threadSummary);
+  getThread(threadId) {
+    const { node, ancestors, children } = this.getNode(threadId);
+    const questions = children.filter((child) => child.expectsAnswer).map((question) => ({
+      id: question.id, prompt: question.title, context: question.body, status: question.status,
+      presentation: question.presentation, createdAt: question.createdAt,
+      responses: this.getNode(question.id).children.filter((child) => child.response).map((response) => ({
+        id: response.id, questionId: question.id, kind: response.response.kind, body: response.body,
+        selections: response.response.selections, presentationRevision: response.response.presentationRevision,
+        author: response.author, createdAt: response.createdAt
+      }))
+    }));
+    const counts = this.#counts(threadId);
+    return { id: node.id, title: node.title, project: ancestors[0]?.title || node.title, summary: node.body,
+      author: node.author, createdAt: node.createdAt, updatedAt: node.updatedAt,
+      counts: { ...counts, questions: counts.requests }, questions };
+  }
+
+  listThreads(view = 'history') {
+    const items = this.listNodes().filter((node) => node.parentId && !node.expectsAnswer && !node.response).map((node) => {
+      const result = this.getThread(node.id);
+      return { ...result, latestPrompt: result.questions.at(-1)?.prompt || node.body, questions: undefined };
+    }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     if (view === 'needs-answer') return items.filter((item) => item.counts.outstanding > 0);
     if (view === 'waiting-on-team') return items.filter((item) => item.counts.waitingOnTeam > 0);
     if (view === 'deferred') return items.filter((item) => item.counts.deferred > 0);
     return items;
   }
 
-  getThread(threadId) {
-    const row = this.db.prepare('SELECT * FROM threads WHERE id = ?').get(threadId);
-    if (!row) throw new NotFoundError('thread not found');
-    const questions = this.db.prepare('SELECT * FROM questions WHERE thread_id = ? ORDER BY created_at').all(threadId);
-    const responses = this.db.prepare('SELECT * FROM responses WHERE thread_id = ? ORDER BY created_at').all(threadId);
-    const byQuestion = new Map();
-    for (const response of responses) {
-      const value = {
-        id: response.id,
-        questionId: response.question_id,
-        kind: response.kind,
-        body: response.body,
-        selections: asJson(response.selections_json, []),
-        presentationRevision: response.presentation_revision,
-        author: { name: response.author_name },
-        createdAt: response.created_at
-      };
-      byQuestion.set(response.question_id, [...(byQuestion.get(response.question_id) || []), value]);
-    }
-    const mappedQuestions = questions.map((question) => ({
-      id: question.id,
-      prompt: question.prompt,
-      context: question.context,
-      status: question.status,
-      presentation: {
-        kind: question.presentation_kind,
-        revision: question.presentation_revision,
-        ...asJson(question.presentation_json, {})
-      },
-      createdAt: question.created_at,
-      responses: byQuestion.get(question.id) || []
-    }));
-    const counts = this.#counts(mappedQuestions);
-    return {
-      id: row.id,
-      title: row.title,
-      project: row.project,
-      summary: row.summary,
-      author: { name: row.author_name, role: row.author_role },
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      counts,
-      questions: mappedQuestions
-    };
-  }
-
   listEvents(after = 0, threadId = null) {
     const rows = threadId
       ? this.db.prepare('SELECT * FROM events WHERE sequence > ? AND thread_id = ? ORDER BY sequence LIMIT 100').all(after, threadId)
       : this.db.prepare('SELECT * FROM events WHERE sequence > ? ORDER BY sequence LIMIT 100').all(after);
-    return rows.map((row) => ({
-      sequence: row.sequence, id: row.id, type: row.type, threadId: row.thread_id,
-      payload: asJson(row.payload_json, {}), createdAt: row.created_at
-    }));
+    return rows.map((row) => ({ sequence: row.sequence, id: row.id, type: row.type, threadId: row.thread_id, payload: parse(row.payload_json, {}), createdAt: row.created_at }));
   }
 
   seedDemo() {
-    const { count } = this.db.prepare('SELECT COUNT(*) AS count FROM threads').get();
+    const { count } = this.db.prepare('SELECT COUNT(*) AS count FROM nodes').get();
     if (count > 0) return;
     this.createThread({
       id: 'thr_mist-creature',
@@ -279,42 +250,180 @@ export class ThreadStore {
     });
   }
 
-  #insertQuestion(threadId, input, createdAt) {
-    const questionId = input.id || `q_${randomUUID()}`;
-    const presentation = input.presentation || {};
-    const kind = presentation.kind || 'text-v1';
-    const revision = presentation.revision || `rev_${randomUUID()}`;
-    this.db.prepare(`INSERT INTO questions
-      (id, thread_id, prompt, context, presentation_kind, presentation_revision, presentation_json, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'outstanding', ?)`)
-      .run(questionId, threadId, input.prompt.trim(), input.context?.trim() || '', kind, revision,
-        JSON.stringify({ ...presentation, kind: undefined, revision: undefined }), createdAt);
-    return { id: questionId, revision };
+  #normalizeInput(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new InputError('publish input must be an object');
+    if (input.path && input.parentId) throw new InputError('use path or parentId, not both');
+    const familiarScope = input.project != null || input.thread != null;
+    if (familiarScope && (input.path || input.parentId)) throw new InputError('use project/thread, path, or parentId, not multiple locators');
+    const path = familiarScope ? [
+      ...(input.project != null ? [text(input.project, 'project')] : []),
+      ...(input.thread != null ? [text(input.thread, 'thread')] : [])
+    ] : input.path;
+    const question = typeof input.question === 'string' ? input.question : null;
+    const expectsAnswer = answerRequest(input) || question !== null || input.kind === 'question'; // old request shorthand
+    const title = text(question || input.title, 'title or question');
+    const body = text(input.body || input.context, 'body', false);
+    let presentation = input.presentation;
+    if (input.html) presentation = { kind: 'html-v1', html: input.html, fallback: input.fallback, revision: input.revision };
+    if (!presentation && input.choices) presentation = { kind: 'text-v1', choices: input.choices, multiple: !!input.multiple };
+    if (path && (!Array.isArray(path) || path.some((part) => typeof part !== 'string' || !part.trim()))) throw new InputError('path is an array of nonempty node titles');
+    return { expectsAnswer, title, body, path: path?.map((part) => part.trim()) || null, parentId: input.parentId || null,
+      author: input.author || { name: 'AI teammate' }, presentation: presentation ? this.#presentation(presentation, false) : (expectsAnswer ? this.#presentation({}, false) : null) };
   }
 
-  #event(type, threadId, payload, createdAt) {
-    this.db.prepare(`INSERT INTO events (id, type, thread_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)`)
-      .run(`evt_${randomUUID()}`, type, threadId, JSON.stringify(payload), createdAt);
-  }
-
-  #threadSummary = (row) => ({
-    id: row.id, title: row.title, project: row.project, summary: row.summary,
-    author: { name: row.author_name, role: row.author_role },
-    latestPrompt: row.latest_prompt, createdAt: row.created_at, updatedAt: row.updated_at,
-    counts: {
-      questions: Number(row.question_count || 0), outstanding: Number(row.outstanding_count || 0),
-      waitingOnTeam: Number(row.team_count || 0), deferred: Number(row.deferred_count || 0)
+  #presentation(input, captureAssets = true) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new InputError('presentation must be an object');
+    const value = structuredClone(input);
+    value.kind ||= 'text-v1';
+    // Revision is generated at insertion, not here, so request retries have a stable fingerprint.
+    if (value.kind === 'html-v1') {
+      text(value.html, 'presentation html');
+      if (!value.fallback) throw new InputError('an authored presentation needs a readable fallback');
     }
-  });
-
-  #counts(questions) {
-    return {
-      questions: questions.length,
-      outstanding: questions.filter((q) => q.status === 'outstanding').length,
-      waitingOnTeam: questions.filter((q) => q.status === 'waiting_on_team').length,
-      deferred: questions.filter((q) => q.status === 'deferred').length
-    };
+    if (captureAssets && Array.isArray(value.options)) for (const option of value.options) {
+      if (typeof option.image === 'string' && option.image.startsWith('/assets/')) {
+        const filename = resolve(assetsDir, option.image.slice('/assets/'.length));
+        if (!filename.startsWith(resolve(assetsDir) + sep)) throw new InputError('invalid asset reference');
+        try {
+          const bytes = readFileSync(filename);
+          const mime = filename.endsWith('.svg') ? 'image/svg+xml' : filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+          option.image = `data:${mime};base64,${bytes.toString('base64')}`;
+        } catch { throw new InputError('presentation asset not found'); }
+      }
+    }
+    return value;
   }
+
+  #resolvePath(path, author) {
+    let parentId = null;
+    const createdIds = [];
+    for (const title of path) {
+      const matches = this.db.prepare('SELECT id FROM nodes WHERE parent_id IS ? AND title = ?').all(parentId, title);
+      if (matches.length > 1) throw new ConflictError(`path is ambiguous at “${title}”; use parentId`);
+      if (matches.length === 1) parentId = matches[0].id;
+      else {
+        parentId = this.#insert({ title, parentId, author });
+        createdIds.push(parentId);
+      }
+    }
+    return { parentId, createdIds };
+  }
+
+  #insert(input) {
+    const id = input.id || `node_${randomUUID()}`;
+    const createdAt = input.createdAt || now();
+    const presentation = input.presentation ? { ...input.presentation, revision: input.presentation.revision || `rev_${randomUUID()}` } : null;
+    this.db.prepare(`INSERT INTO nodes
+      (id, parent_id, expects_answer, title, body, author_json, status, presentation_json, response_json, idempotency_key, request_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, input.parentId || null, input.expectsAnswer ? 1 : 0, input.title, input.body || '',
+        JSON.stringify(input.author || { name: 'AI teammate' }), input.status || (input.expectsAnswer ? 'outstanding' : null),
+        presentation ? JSON.stringify(presentation) : null, input.response ? JSON.stringify(input.response) : null,
+        input.key || null, input.requestHash || null, createdAt, input.updatedAt || createdAt);
+    // Updating the whole ancestor chain makes nested activity discoverable without changing identity.
+    if (input.parentId) this.db.prepare(`WITH RECURSIVE parents(id) AS (
+      SELECT ? UNION ALL SELECT n.parent_id FROM nodes n JOIN parents p ON n.id = p.id WHERE n.parent_id IS NOT NULL
+    ) UPDATE nodes SET updated_at = ? WHERE id IN (SELECT id FROM parents)`).run(input.parentId, createdAt);
+    return id;
+  }
+
+  #existing(key, requestHash, ...compatibleHashes) {
+    if (!key) return null;
+    const existing = this.db.prepare('SELECT * FROM nodes WHERE idempotency_key = ?').get(key);
+    if (existing && existing.request_hash !== requestHash && !compatibleHashes.filter(Boolean).includes(existing.request_hash)) throw new ConflictError('Idempotency-Key was already used for different content');
+    return existing;
+  }
+
+  #require(id) {
+    const node = this.db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
+    if (!node) throw new NotFoundError('node not found');
+    return node;
+  }
+
+  #node(row) {
+    return { id: row.id, parentId: row.parent_id, title: row.title, body: row.body, expectsAnswer: !!row.expects_answer,
+      author: parse(row.author_json, {}), status: row.status, presentation: parse(row.presentation_json), response: parse(row.response_json),
+      createdAt: row.created_at, updatedAt: row.updated_at };
+  }
+
+  #counts(id) {
+    const rows = this.db.prepare(`WITH RECURSIVE descendants AS (
+      SELECT * FROM nodes WHERE id = ? UNION ALL SELECT n.* FROM nodes n JOIN descendants d ON n.parent_id = d.id
+    ) SELECT expects_answer, status FROM descendants`).all(id);
+    return { nodes: rows.length, requests: rows.filter((row) => row.expects_answer).length,
+      outstanding: rows.filter((row) => row.status === 'outstanding').length,
+      waitingOnTeam: rows.filter((row) => row.status === 'waiting_on_team').length,
+      deferred: rows.filter((row) => row.status === 'deferred').length };
+  }
+
+  #legacyThreadId(nodeId) {
+    const node = this.#require(nodeId);
+    return node.parent_id || node.id;
+  }
+
+  #atomic(work) {
+    this.db.exec('BEGIN IMMEDIATE');
+    let result;
+    try { result = work(); this.db.exec('COMMIT'); }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    // The saved record is authoritative even if a live transport listener fails.
+    try { this.changes.emit('change'); } catch (error) { console.error('Live update listener failed after commit:', error); }
+    return result;
+  }
+
+  #event(type, threadId, payload) {
+    this.db.prepare('INSERT INTO events (id, type, thread_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(`evt_${randomUUID()}`, type, threadId, JSON.stringify(payload), now());
+  }
+
+  #migrateNodeKinds() {
+    const columns = this.db.prepare('PRAGMA table_info(nodes)').all().map((column) => column.name);
+    if (!columns.includes('kind')) return;
+    this.#atomic(() => {
+      this.db.exec(`ALTER TABLE nodes ADD COLUMN expects_answer INTEGER NOT NULL DEFAULT 0;
+        UPDATE nodes SET expects_answer = 1 WHERE kind = 'question';
+        ALTER TABLE nodes DROP COLUMN kind;`);
+    });
+  }
+
+  #migrateLegacy() {
+    const legacy = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'").get();
+    const { count } = this.db.prepare('SELECT COUNT(*) AS count FROM nodes').get();
+    if (!legacy || count > 0) return;
+    this.#atomic(() => {
+      const oldThreads = this.db.prepare('SELECT * FROM threads ORDER BY created_at').all();
+      for (const thread of oldThreads) {
+        const { parentId } = this.#resolvePath([thread.project], { name: 'Threadroom' });
+        this.#insert({ id: thread.id, parentId, title: thread.title, body: thread.summary,
+          author: { name: thread.author_name, role: thread.author_role }, createdAt: thread.created_at, updatedAt: thread.updated_at });
+      }
+      for (const question of this.db.prepare('SELECT * FROM questions ORDER BY created_at').all()) {
+        this.#insert({ id: question.id, parentId: question.thread_id, expectsAnswer: true, title: question.prompt, body: question.context,
+          author: this.getNode(question.thread_id).node.author, status: question.status,
+          presentation: this.#presentation({ ...parse(question.presentation_json, {}), kind: question.presentation_kind, revision: question.presentation_revision }),
+          createdAt: question.created_at });
+      }
+      for (const response of this.db.prepare('SELECT * FROM responses ORDER BY created_at').all()) {
+        this.#insert({ id: response.id, parentId: response.question_id, title: response.body.slice(0, 100) || response.kind,
+          body: response.body, author: { name: response.author_name },
+          response: { kind: response.kind, selections: parse(response.selections_json, []), presentationRevision: response.presentation_revision, targetId: response.question_id },
+          key: response.idempotency_key,
+          requestHash: response.idempotency_key ? `legacy:${fingerprint({ nodeId: response.question_id, kind: response.kind, body: response.body, selections: parse(response.selections_json, []) })}` : null,
+          createdAt: response.created_at });
+      }
+    });
+  }
+}
+
+function answerRequest(input) {
+  if (input.expectsAnswer != null && typeof input.expectsAnswer !== 'boolean') throw new InputError('expectsAnswer must be a boolean');
+  return input.expectsAnswer === true;
+}
+
+function text(value, name, required = true) {
+  if (value == null && !required) return '';
+  if (typeof value !== 'string' || (required && !value.trim())) throw new InputError(`${name} must be ${required ? 'a nonempty' : 'a'} string`);
+  return value.trim();
 }
 
 export class InputError extends Error { statusCode = 400; }
