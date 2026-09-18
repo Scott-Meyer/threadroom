@@ -44,7 +44,7 @@ function renderSidebar() {
 }
 
 function renderOutline() {
-  const zoomed = state.byId.get(state.zoomId);
+  const zoomed = state.view === 'outline' ? state.byId.get(state.zoomId) : null;
   const labels = { outline:['OUTLINE',zoomed?.title || 'Everything'], outstanding:['INBOX','Needs your answer'], waiting_on_team:['OUTBOUND','Waiting on team'], deferred:['LATER','Deferred'] };
   $('#viewEyebrow').textContent = labels[state.view][0];
   $('#viewTitle').textContent = labels[state.view][1];
@@ -54,7 +54,7 @@ function renderOutline() {
   const query = state.query.toLowerCase();
   let html;
   if (state.view !== 'outline' || query) {
-    const nodes = state.nodes.filter((node) => inBranch(node,state.zoomId) && (state.view === 'outline' || node.status === state.view) && (!query || [node.title,node.author.name].join(' ').toLowerCase().includes(query)));
+    const nodes = state.nodes.filter((node) => (state.view !== 'outline' || inBranch(node,state.zoomId)) && (state.view === 'outline' || node.status === state.view) && (!query || [node.title,node.author.name].join(' ').toLowerCase().includes(query)));
     html = nodes.map((node) => `<div class="outline-context">${esc(ancestorsOf(node.id).map((parent) => parent.title).join(' › '))}</div>${outlineRow(node,0,false)}`).join('');
   } else {
     const roots = childrenOf(state.zoomId);
@@ -168,7 +168,7 @@ function renderChildren(children) {
   </article>`).join('');
 }
 function bindChildren() {
-  $$('[data-open-child]').forEach((button) => button.addEventListener('click',() => { state.zoomId = button.dataset.openChild; renderOutline(); openNode(button.dataset.openChild); }));
+  $$('[data-open-child]').forEach((button) => button.addEventListener('click',() => zoom(button.dataset.openChild)));
   $$('[data-branch-child]').forEach((button) => button.addEventListener('click',() => showPublish(button.dataset.branchChild)));
 }
 function nodeContext(node) {
@@ -274,7 +274,8 @@ $('#addInBranch').addEventListener('click',() => showPublish(state.zoomId));
 $('#outlineUp').addEventListener('click',() => zoom(state.byId.get(state.zoomId)?.parentId || null));
 $('#searchInput').addEventListener('input',(event) => { state.query = event.target.value; renderOutline(); });
 $('#refreshButton').addEventListener('click',async () => { try { await refreshTree(); if (state.selected) await openNode(state.selected.node.id,{navigate:false}); toast('Caught up with saved history'); } catch (error) { toast(error.message,true); } });
-$$('.nav-item').forEach((button) => button.addEventListener('click',() => { state.view = button.dataset.view; $$('.nav-item').forEach((other) => other.classList.toggle('active',other === button)); renderOutline(); }));
+// Sidebar views are global; an outline zoom must not hide incoming questions in another branch.
+$$('.nav-item').forEach((button) => button.addEventListener('click',() => { state.view = button.dataset.view; state.zoomId = null; $$('.nav-item').forEach((other) => other.classList.toggle('active',other === button)); renderOutline(); }));
 window.addEventListener('popstate',() => { const id = location.pathname.match(/^\/threads\/([^/]+)$/)?.[1]; if (id) openNode(id,{navigate:false}); });
 function toast(message,error=false) {
   const element = $('#toast'); element.textContent = message; element.classList.toggle('error',error); element.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => element.classList.remove('show'),3500);

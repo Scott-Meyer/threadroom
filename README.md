@@ -16,7 +16,7 @@ Or `npm start` serves the API and website together on `4310` for convenience. Th
 
 ## Try the direction
 
-The outline follows [Workflowy's expand/zoom distinction](https://workflowy.com/help/navigate-around): chevrons expand children; bullets zoom into a branch; breadcrumbs navigate back. Everything is the same node—no root/project/question/answer node types. A node may ask for an answer, carry saved response context, or do both. Placement only records its parent. **Branch here** works at any depth.
+The outline follows [Workflowy's expand/zoom distinction](https://workflowy.com/help/navigate-around): chevrons expand children; bullets zoom into a branch; breadcrumbs navigate back. Sidebar attention views remain global, so zooming into one discussion doesn't hide incoming questions elsewhere. Everything is the same node—no root/project/question/answer node types. A node may ask for an answer, carry saved response context, or do both. Placement only records its parent. **Branch here** works at any depth.
 
 ```sh
 node examples/publish-canvas.js
