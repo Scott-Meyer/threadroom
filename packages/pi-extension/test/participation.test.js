@@ -123,6 +123,21 @@ test('waiting returns the saved answer; timeout/cancel leave a watch and durable
   assert.equal(receipt.responseId, saved.responseId); assert.equal(receipt.target.node.status, 'rejected');
 });
 
+test('an ordinary ask that waits returns its answer and matching request snapshot', { timeout: 10000 }, async (t) => {
+  const { client } = await service(t); const created = deferred(), delivered = [];
+  const room = participant(t, client, { checkpoint: (state) => { if (state.watches.length) created.resolve(state.watches[0]); },
+    deliver: (receipt) => delivered.push(receipt) });
+  const asking = room.publish({ question: 'Return useful context after answering?' }, { key: 'ordinary-wait-1', waitMs: 2000 });
+  const id = await created.promise;
+  const saved = await client.respond(id, { body: 'The returned request should now be answered.', author: human });
+  const result = await asking;
+  assert.equal(result.node.id, id); assert.equal(result.outcome, 'answer');
+  assert.equal(result.response.id, saved.responseId); assert.equal(result.node.status, 'answered');
+  assert.equal(result.counts.outstanding, 0); assert.equal(result.children.at(-1).id, saved.responseId);
+  assert.equal(result.contextSnapshot, 'wait_read');
+  room.acknowledge(result.receivedResponseIds); assert.equal(delivered.length, 0);
+});
+
 test('a paused host can decline delivery, then flush exactly one saved response when ready', { timeout: 10000 }, async (t) => {
   const { client } = await service(t); let paused = true, checkpoint; const attempted = deferred(), delivered = [];
   const room = participant(t, client, { checkpoint: (value) => { checkpoint = value; }, deliver: (value) => {

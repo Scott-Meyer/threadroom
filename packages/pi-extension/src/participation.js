@@ -120,7 +120,9 @@ export class Participation {
       this.watches.add(published.node.id); this.cursor = 0; this.save(); this.start();
     }
     const result = waitMs !== undefined ? await this.wait(published.node.id, { timeoutMs: waitMs, signal }) : {};
-    return { ...readable(published, this.client), ...result, retryKey: key, participation: this.adjacent() };
+    return { ...readable(published, this.client),
+      ...(waitMs !== undefined ? { contextSnapshot: 'publication' } : {}), ...result,
+      retryKey: key, participation: this.adjacent() };
   }
   async respond(id, input, { key = randomUUID(), signal } = {}) {
     let response;
@@ -137,12 +139,16 @@ export class Participation {
     if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 120000) throw new Error('Wait timeout is 0–120000 ms; later replies remain available.');
     if (this.waiters.has(id)) throw new Error('This session is already waiting on that node.');
     if (!this.watches.has(id)) await this.watch(id, { signal });
-    let finish, inspecting = false, inspectAgain = false, settled = false;
+    let finish, inspecting = false, inspectAgain = false, settled = false, lastRead;
     const controller = new AbortController();
     const waitSignal = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]);
     const outcome = new Promise((resolve) => { finish = (value) => {
       if (settled) return;
-      settled = true; resolve(value); controller.abort();
+      settled = true;
+      // Carry the very snapshot that established the outcome, without a new
+      // network dependency or a read that could race a subsequent team reply.
+      resolve({ ...(lastRead ? { ...readable(lastRead, this.client), contextSnapshot: 'wait_read' } : {}), ...value });
+      controller.abort();
     }; });
     const inspect = async (end) => {
       if (end) return finish({ outcome: end, response: null });
@@ -154,6 +160,7 @@ export class Participation {
           inspectAgain = false;
           const record = await this.client.read(id, { signal: waitSignal });
           if (settled || this.closed) return;
+          lastRead = record;
           if (!record.node.expectsAnswer) throw new Error('This node does not request an answer.');
           const latest = record.children.filter((child) => child.response).at(-1);
           if (latest && ['answer', 'clarification', 'defer', 'reject'].includes(latest.response.kind)) {
