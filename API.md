@@ -15,6 +15,10 @@ const discussion = await room.read(asked.node.id); // content + replies in child
 
 `project` names an ordinary parent; optional `thread` names a conversation inside it. Both are conveniences for resolving a path, not node types. No tree-building calls or type flags are needed. Leave the project out for an unscoped question. Replies are ordinary nodes too, so discussions can deepen when useful.
 
+## Caller correlation
+
+`author` is captured as supplied JSON, including optional `id` and `sessionId` alongside `name`. These fields survive reads, tree/ancestor context, replies, and restart; they let an adapter correlate a durable interaction with its caller. They are opaque caller-provided metadata, not verified identity or access control. Submitted author metadata is part of new publication/response retry fingerprints, so retries retain the original metadata even if a different session resumes the interaction. Don't put credentials in it.
+
 ## Ask at any depth in one call
 
 ```sh
@@ -135,6 +139,15 @@ curl -s 'http://127.0.0.1:4310/api/events?after=0'
 ```
 
 SSE sends `event: change`, `id: <sequence>`, and `data: <full durable event JSON>`. Events have stable ID, increasing sequence, type, affected identity/context, and timestamp. They become visible only after the associated domain write commits. Reconnect with `Last-Event-ID` or `after` to replay missed events. `/api/events` returns up to 100 at a time; advance to the last sequence. SSE drains replay pages and then listens for committed changes.
+
+Stable payload fields for session watches:
+
+| Event type | Payload | Meaning |
+| --- | --- | --- |
+| `node.created` | `nodeId`, `parentId` | Created leaf and its direct parent (or `null`). |
+| `response.created` | `questionId`, `responseId`, `kind` | Target node, saved child node, and response intent. |
+
+`questionId` is a historical name for the target ID, not a node type; replies can target any node. Additional fields/event types may appear without changing these meanings. Idempotent retries recover receipts without appending duplicate events. An event is a committed change signal; read the referenced node for its captured content.
 
 Subscriptions/waits are live transport, not the only copy of a response. No Pi session or website owns persistence. Notification acknowledgements/exactly-once external actions are not claimed.
 

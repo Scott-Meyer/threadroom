@@ -465,3 +465,50 @@ test('ordinary client asks in a named project and replies without describing a t
     assert.ok(!tree.nodes.some(node => node.title === 'Another project'));
   } finally { await service.close(); }
 });
+
+
+test('caller correlation and watch event identities survive restart and idempotent replay', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'threadroom-watch-contract-'));
+  const database = join(directory, 'records.sqlite');
+  let service = await runningService(database);
+  const author = { name: 'Builder', id: 'agent-builder-01', sessionId: 'pi-session-alpha' };
+  const responder = { name: 'Reviewer demo', id: 'human-demo-01', sessionId: 'browser-demo' };
+  const ask = { project: 'Handoff', thread: 'Experiments', question: 'Which edge feels right?', author };
+  const reply = { body: 'Keep the restless edges.', author: responder };
+  try {
+    const published = await request(service, '/api/ask', {
+      method: 'POST', headers: { 'Idempotency-Key': 'watch-contract-ask' }, body: JSON.stringify(ask)
+    });
+    const question = published.result.node;
+    const answered = await request(service, `/api/nodes/${question.id}/respond`, {
+      method: 'POST', headers: { 'Idempotency-Key': 'watch-contract-reply' }, body: JSON.stringify(reply)
+    });
+    const events = (await request(service, '/api/events?after=0')).result.events;
+    assert.deepEqual(events.map(event => event.type), ['node.created', 'response.created']);
+    assert.equal(events[0].payload.nodeId, question.id);
+    assert.equal(events[0].payload.parentId, question.parentId);
+    assert.equal(events[1].payload.questionId, question.id);
+    assert.equal(events[1].payload.responseId, answered.result.node.id);
+    assert.equal(events[1].payload.kind, 'answer');
+    await service.close(); service = await runningService(database);
+    const recovered = (await request(service, `/api/nodes/${question.id}`)).result;
+    assert.deepEqual(recovered.node.author, author);
+    assert.ok(recovered.ancestors.every(node => JSON.stringify(node.author) === JSON.stringify(author)));
+    assert.deepEqual(recovered.children[0].author, responder);
+    const tree = (await request(service, '/api/tree')).result.nodes;
+    assert.deepEqual(tree.find(node => node.id === question.id).author, author);
+    await request(service, '/api/ask', {
+      method: 'POST', headers: { 'Idempotency-Key': 'watch-contract-ask' }, body: JSON.stringify(ask)
+    });
+    await request(service, `/api/nodes/${question.id}/respond`, {
+      method: 'POST', headers: { 'Idempotency-Key': 'watch-contract-reply' }, body: JSON.stringify(reply)
+    });
+    const replay = (await request(service, '/api/events?after=0')).result.events;
+    assert.deepEqual(replay, events);
+    const tail = (await request(service, `/api/events?after=${events[0].sequence}`)).result.events;
+    assert.deepEqual(tail, [events[1]]);
+  } finally {
+    if (service.server.listening) await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
