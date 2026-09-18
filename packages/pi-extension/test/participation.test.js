@@ -10,6 +10,13 @@ import { once } from 'node:events';
 import { ThreadroomClient, ThreadroomError } from '../src/client.js';
 import { Participation } from '../src/participation.js';
 
+const fixtureParticipants = new WeakMap();
+async function deadline(promise, ms, message) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message())), ms);
+  })]); } finally { clearTimeout(timer); }
+}
 function deferred() {
   let resolve;
   const promise = new Promise((r) => { resolve = r; });
@@ -19,27 +26,46 @@ async function service(t) {
   const directory = await mkdtemp(join(tmpdir(), 'threadroom-pi-'));
   const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
   const port = reservation.address().port; await new Promise((r) => reservation.close(r));
-  let child;
+  let child, childLog = '';
   async function start() {
+    childLog = '';
     child = spawn(process.execPath, [fileURLToPath(new URL('../../../src/main.js', import.meta.url))], {
       env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), THREADROOM_SERVE_UI: '0', THREADROOM_DB: join(directory, 'records.sqlite') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    await new Promise((resolve, reject) => {
-      let log = '';
-      child.stdout.on('data', (data) => { log += data; if (log.includes('is ready at')) resolve(); });
-      child.stderr.on('data', (data) => { log += data; });
-      child.once('error', reject); child.once('exit', (code) => reject(new Error(`Service exited (${code}): ${log}`)));
-    });
+    await deadline(new Promise((resolve, reject) => {
+      child.stdout.on('data', (data) => { childLog = (childLog + data).slice(-16000);
+        if (childLog.includes('is ready at')) resolve(); });
+      child.stderr.on('data', (data) => { childLog = (childLog + data).slice(-16000); });
+      child.once('error', reject);
+      child.once('exit', (code, signal) => reject(new Error(`Service exited (${code}/${signal}): ${childLog}`)));
+    }), 3000, () => `Service startup deadline: ${childLog}`);
   }
-  async function stop() { if (child?.exitCode === null) { const exit = once(child, 'exit'); child.kill('SIGTERM'); await exit; } }
+  async function stop() {
+    // A child that exited by signal still has exitCode=null. Waiting for its
+    // already-emitted exit event would hide the original test failure forever.
+    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+    const current = child, exit = once(current, 'exit');
+    current.kill('SIGTERM');
+    try { await deadline(exit, 3000, () => `Service shutdown deadline: ${childLog}`); }
+    catch (error) {
+      current.kill('SIGKILL');
+      await deadline(exit, 1000, () => `Service did not exit after SIGKILL (PID ${current.pid}): ${childLog}`);
+      throw error;
+    }
+  }
+  const client = new ThreadroomClient(`http://127.0.0.1:${port}`), participants = new Set();
+  fixtureParticipants.set(client, participants);
+  t.after(async () => {
+    try { await deadline(Promise.all([...participants].map((room) => room.close())), 3000, () => 'Participation shutdown deadline'); }
+    finally { try { await stop(); } finally { await rm(directory, { recursive: true, force: true }); } }
+  });
   await start();
-  t.after(async () => { await stop(); await rm(directory, { recursive: true, force: true }); });
-  return { client: new ThreadroomClient(`http://127.0.0.1:${port}`), start, stop };
+  return { client, start, stop };
 }
 function participant(t, client, options = {}) {
   const room = new Participation(client, { author: { name: 'Artist', id: 'pi:artist', sessionId: 'artist' }, ...options });
-  t.after(() => room.close()); return room;
+  fixtureParticipants.get(client).add(room); return room;
 }
 const human = { name: 'Artist', sessionId: 'another-session' }; // same name does not determine routing
 
