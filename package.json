@@ -3,13 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": ["packages/*"],
+  "pi": {
+    "extensions": ["./packages/pi-extension/extensions"],
+    "skills": [],
+    "prompts": [],
+    "themes": []
+  },
   "description": "Durable asynchronous questions and visual reviews for people and AI teammates",
   "scripts": {
     "dev": "node --watch src/main.js",
     "start": "node src/main.js",
     "test": "node --test",
     "api": "THREADROOM_SERVE_UI=0 node src/main.js",
-    "ui": "node src/ui-main.js"
+    "ui": "node src/ui-main.js",
+    "pi:pack:check": "npm pack --workspace threadroom-pi --dry-run",
+    "pi:pack": "npm pack --workspace threadroom-pi"
   },
   "engines": {
     "node": ">=24"

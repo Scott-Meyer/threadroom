@@ -1,0 +1,15 @@
+{
+  "name": "threadroom-pi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reserved package for the future Threadroom asking integration for Pi",
+  "keywords": ["pi-package"],
+  "files": ["extensions/", "README.md"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": [],
+    "prompts": [],
+    "themes": []
+  }
+}

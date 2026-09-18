@@ -51,6 +51,10 @@ Useful configuration:
 
 The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. The current host still needs to be awake and both chosen processes need to run.
 
+## Future Pi asking integration
+
+The same private Git repository reserves an independent npm workspace at [`packages/pi-extension`](packages/pi-extension/README.md). Its Pi manifests support eventual local/private-Git installation, and `npm run pi:pack:check` inspects its standalone distribution. It is deliberately inert: no extension code, installation, release, or replacement asking behavior yet. The adapter will consume the HTTP API; the service/UI remain independent.
+
 ## Evidence
 
 `npm test` exercises the public HTTP boundary: restart recovery, independent question state, response retries, clarification/team-reply lifecycle, one-call 25-deep nesting, branching from an answer, mixed request/response capabilities on the same node, live delivery to a blocking ask, timeout recovery, first-spike and typed-spike migration, and an independently hosted UI/API pair with authored question/answer records.
