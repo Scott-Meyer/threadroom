@@ -1,3 +1,3 @@
-# Reserved extension source
+# Pi host adapter
 
-Future Pi extension entry points live here. There is deliberately no JavaScript/TypeScript entry point yet: this package registers no tools, hooks, or asking behavior.
+`index.ts` binds Threadroom participation to Pi's tool, session, and message lifecycle. It does not render authored content or own shared history; those belong to the independent service.

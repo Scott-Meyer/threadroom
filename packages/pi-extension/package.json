@@ -3,11 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Reserved package for the future Threadroom asking integration for Pi",
+  "description": "Durable expressive questions and ongoing Threadroom participation for Pi",
   "keywords": ["pi-package"],
-  "files": ["extensions/", "README.md"],
+  "files": ["extensions/", "src/", "README.md"],
+  "engines": { "node": ">=24" },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
   "pi": {
-    "extensions": ["./extensions"],
+    "extensions": ["./extensions/index.ts"],
     "skills": [],
     "prompts": [],
     "themes": []

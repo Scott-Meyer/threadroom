@@ -51,9 +51,11 @@ Useful configuration:
 
 The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. The current host still needs to be awake and both chosen processes need to run.
 
-## Future Pi asking integration
+## Pi integration — local spike
 
-The same private Git repository reserves an independent npm workspace at [`packages/pi-extension`](packages/pi-extension/README.md). Its Pi manifests support eventual local/private-Git installation, and `npm run pi:pack:check` inspects its standalone distribution. It is deliberately inert: no extension code, installation, release, or replacement asking behavior yet. The adapter will consume the HTTP API; the service/UI remain independent.
+The independent [`packages/pi-extension`](packages/pi-extension/README.md) workspace now exposes expressive questions and ordinary thread participation to Pi. Public-boundary checks cover asynchronous publication, optional waiting/cancellation, saved response provenance, replay/restart recovery, and bounded readable receipts. The real Pi loader accepts both source and packed distribution. An actual Pi RPC/Gemini session published an authored comparison, continued independently, went idle, woke on saved automated feedback, and persisted the correlated reply in its transcript. The adapter consumes the HTTP API, not the database or website; service/UI remain independent.
+
+This is opt-in and unreleased. It does not replace an installed questionnaire automatically, preserve that tool's old form schema, or complete authentication, evolving live presentations, FlightDeck, or an alternative terminal UI. `npm run pi:pack:check` inspects the standalone adapter distribution.
 
 ## Evidence
 
@@ -67,4 +69,4 @@ This is **local single-user software without authentication or permissions**. Au
 
 Authored HTML/CSS/JS runs in an opaque sandbox. It can propose semantic JSON to the host, not submit an answer or access host DOM/credentials. CSP restricts fetches, forms, external resources, and workers; the embedding UI restricts frame destinations. This is not hard CPU/process isolation. Readable fallback and host text-answer/reject controls remain outside authored content. Model/image-generation services would require explicit capabilities, not ambient credentials; the demo generates images procedurally in its own canvas.
 
-The tree supports arbitrary nesting but currently loads the whole outline; large-tree paging, moves/edits/deletion, production access control/hosting, notification acknowledgements, and Pi/FlightDeck adapters remain future work. Browser drafts retain text, proposed values, authored reply source, and retry keys locally. Google Fonts are optional; system fallbacks work offline.
+The tree supports arbitrary nesting but currently loads the whole outline; large-tree paging, moves/edits/deletion, production access control/hosting, notification acknowledgements, production adapter hardening, FlightDeck integration, and an alternative terminal UI remain future work. Browser drafts retain text, proposed values, authored reply source, and retry keys locally. Google Fonts are optional; system fallbacks work offline.

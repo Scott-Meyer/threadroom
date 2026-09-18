@@ -1,33 +1,46 @@
-# Threadroom for Pi — reserved, not implemented
+# Threadroom for Pi
 
-This workspace will make Threadroom the ordinary asking system for Pi agents. Today it contains packaging metadata only: no executable extension, tool registration, automatic installation, or changed asking behavior.
+Bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
-## Boundary
+This is a working local spike, not a released replacement for your installed questionnaire.
 
-The adapter will use the standalone Threadroom HTTP API, not its database, website, or server internals. Normal asks should stay cheap; deeper discussions remain optional. Threadroom owns durable questions, replies, and authored content. Pi owns its caller/session context and how a result resumes agent work. Disconnecting or canceling a wait doesn't delete the question.
+## Try it
 
-The service and website continue to run without Pi. Host-SDK dependencies belong in this workspace when implementation needs them, not in the service. See the repository's [API contract](https://github.com/Scott-Meyer/threadroom/blob/main/API.md) when developing; this package's release artifact intentionally excludes the server/UI.
-
-## Packaging now
-
-From the repository root:
+Run the independent Threadroom API and website first. From this repository, load the extension explicitly:
 
 ```sh
-npm run pi:pack:check  # inspect the distribution, without producing an archive
-npm run pi:pack        # produce threadroom-pi-0.0.0.tgz locally
+pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 ```
 
-The current artifact is an inert scaffold, not an asking extension. An explicit file allowlist keeps backend code, website files, local SQLite data, and session artifacts out. `private: true` prevents accidental npm publication; local tarball packaging still works.
+That isolates the trial from existing extensions. For a normal installation, `pi install ./packages/pi-extension` works; disable/remove `@juicesharp/rpiv-ask-user-question` before enabling this package because both register `ask_user_question`. Installation does not start the service. The packed package contains only this adapter, not the website, database, or reference source.
 
-## Deployment when implemented
+Configuration uses environment variables:
 
-For local development, Pi supports `pi install ./packages/pi-extension`. The repository root also declares this workspace's extension directory, so the same source can be installed from the private Git repository after release:
+- `THREADROOM_API_URL`: defaults to `http://127.0.0.1:4310`.
+- `THREADROOM_UI_URL`: defaults to `http://127.0.0.1:4311`, or the configured API address when one is supplied. Set it separately for an independently hosted website.
 
-```sh
-# Example future ref, not a tag that exists today:
-pi install git:git@github.com:Scott-Meyer/threadroom@pi-v0.1.0
-```
+The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
-Use one installation route. Pi refs are pinned; moving to a later release means installing its new ref explicitly. Private Git installation uses the consumer's authorized GitHub SSH access. It doesn't deploy or start the Threadroom service.
+## Participation
 
-The future release path is: implement and exercise the actual Pi asking boundary, version this workspace, check the packed contents, then create a signed `pi-v<VERSION>` tag and distribute that Git ref (optionally the tarball as a private GitHub release asset). No publishing/deployment workflow is enabled for the unimplemented adapter, and no release tag is created now. Registry publication or making anything public is a separate decision.
+`ask_user_question` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. This changes the old tool's input contract; it is not a drop-in questionnaire-schema emulator.
+
+`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows connectivity and local participation.
+
+Action results carry durable identities/links, saved status, provenance, and a small view of this session's watches. Large authored source and image values stay at their saved API address instead of being echoed into every turn. Browsing currently filters the full service outline locally and returns at most 50 matches; this isn't a server search/paging implementation.
+
+## What a reply means
+
+Later saved feedback enters the originating Pi session as a custom message. Busy agents receive it at Pi's next safe steering boundary; idle agents can wake. Delivery pauses around compaction and resumes afterward. During tree navigation/summarization it preserves the old watch without waking on the outgoing branch. Because Pi lacks a cancel/failure completion event there, a deferred receipt owns a small idle recheck timer; success rebinds the chosen branch, while cancellation/failure releases the gate when the host becomes idle. A clarification, rejection, or deferral retains its own meaning—it isn't silently turned into approval.
+
+Service events replay on reconnect. Adding a watch currently replays from the beginning, and an unsequenced answer found by a wait conservatively holds the checkpoint there until its transcript receipt exists. That trades transport work for recovery safety; scoped per-watch replay is future scalability work. Local checkpoints remember watched IDs and a safe replay position; they don't become another conversation database. A queued Pi message does **not** advance past an unconfirmed response. Only a corresponding persisted transcript receipt does. Reload reconciles receipts, so an interrupted checkpoint doesn't require asking the person again. The current host does not reliably expose whether a custom steering queue was discarded or remains queued after abort. The adapter therefore does not guess and resend during the same runtime; reading/waiting or a session reload recovers unpersisted feedback. This is not an exactly-once guarantee for whatever an agent does afterward.
+
+Timeout (maximum 120 seconds) and cancellation release the wait, not the question or watch. Connection failure is explicit; an ambiguous write returns a retry key for unchanged content. Reading an old discussion does not automatically inherit its original session's subscription. Forked sessions don't inherit live watches merely by copying a transcript; they can adopt a node explicitly.
+
+## Boundaries and next slice
+
+Threadroom owns saved conversations and presentation isolation. Authored scripts can propose drafts, but host controls own saving feedback. Pi owns session participation and model-message delivery. Neither side grants generated content filesystem, terminal, or model credentials.
+
+The transport and participation modules under `src/` have no Pi or rendering imports. Another host can use them without implementing a Pi TUI. A future terminal UI can consume the same service; its integration point remains open.
+
+Captured presentations are immutable today. An evolving job dashboard or two-way live workspace needs an explicit service capability, not a hidden local server or a Pi-only conversation store. Hard CPU isolation, authentication, remote deployment, large-history scalability, notification preferences, and broader host lifecycle evidence remain unfinished.
