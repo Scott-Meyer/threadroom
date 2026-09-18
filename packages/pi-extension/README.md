@@ -2,7 +2,7 @@
 
 Bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
-This is a working local spike, not a released replacement for your installed questionnaire.
+Threadroom is the optional shared, longer-lived asking lane. The first-release direction keeps ordinary blocking and non-blocking asks in Pi, local to its transcript and outside the Threadroom API/discoverable outline. Native async asking is not implemented here yet. This is a working local spike, not a released replacement for your installed questionnaire.
 
 ## Try it
 
@@ -18,7 +18,7 @@ Configuration uses environment variables:
 
 - `THREADROOM_API_URL`: defaults to `http://127.0.0.1:4310`.
 - `THREADROOM_UI_URL`: defaults to `http://127.0.0.1:4311`, or the configured API address when one is supplied. Set it separately for an independently hosted website.
-- `THREADROOM_REPLACE_ASK=1`: explicitly register the rich tool as `ask_user_question` instead. Disable/remove the old questionnaire before choosing this mode; the input contract is different. Coexistence is the default for the first beta.
+- `THREADROOM_REPLACE_ASK=1`: an experimental API-backed alias, not the native first-release default. It explicitly registers the rich tool as `ask_user_question` instead. Disable/remove the old questionnaire before choosing this mode; the input contract is different. Coexistence is the default for the first beta.
 
 The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
@@ -26,7 +26,9 @@ The current service is single-user and unauthenticated. Keep it local or use a t
 
 `threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. The optional replacement mode changes the old tool's input contract; it is not a drop-in questionnaire-schema emulator.
 
-`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows connectivity and local participation.
+`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints; the adapter never starts the service.
+
+Pi shows readable questions, saved reply intent, and durable discussion links—not raw authored programs or JSON envelopes. Expanded views reveal more history and receipt identity. Saved text is literal terminal text, not executable controls or Markdown. The full machine-facing records remain unchanged.
 
 Action results carry durable identities/links, saved status, provenance, and a small view of this session's watches. Large authored source and image values stay at their saved API address instead of being echoed into every turn. Browsing currently filters the full service outline locally and returns at most 50 matches; this isn't a server search/paging implementation.
 

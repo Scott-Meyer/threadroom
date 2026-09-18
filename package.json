@@ -5,7 +5,7 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "pi": {
-    "extensions": ["./packages/pi-extension/extensions"],
+    "extensions": ["./packages/pi-extension/extensions/index.ts"],
     "skills": [],
     "prompts": [],
     "themes": []

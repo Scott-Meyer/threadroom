@@ -2,12 +2,14 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { ThreadroomClient } from '../src/client.js';
 import { Participation } from '../src/participation.js';
+import { renderAskCall, renderDiscussionCall, renderToolResult, renderFeedback, participationNotice } from './presentation/renderers.ts';
 
 const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
 
 export default function threadroom(pi: ExtensionAPI) {
   const askToolName = process.env.THREADROOM_REPLACE_ASK === '1' ? 'ask_user_question' : 'threadroom_ask';
+  pi.registerMessageRenderer(ACTIVITY, renderFeedback);
   let room: Participation | undefined;
   let context: any;
   let paused = false;
@@ -108,6 +110,10 @@ export default function threadroom(pi: ExtensionAPI) {
     room?.flush();
   });
 
+  const endpoints = { apiUrl: client.baseUrl, uiUrl: client.uiUrl };
+  function renderResult(result: any, options: any, theme: any, context: any) {
+    return renderToolResult(result, options, theme, { ...context, endpoints });
+  }
   function result(value: any) { return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: value }; }
   function failure(error: any) {
     return result({ error: error.message, status: error.status, retryKey: error.retryKey,
@@ -119,6 +125,7 @@ export default function threadroom(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: askToolName, label: 'Ask in Threadroom',
+    renderCall: renderAskCall, renderResult,
     description: 'Bring the person a question or an interaction you designed. Threadroom saves it and its presentation, returns a durable address, and brings later replies into this session. Returns immediately unless you choose to wait. Authored HTML/JS runs in the service sandbox; its proposals are drafts, while the surrounding host owns saving an answer. Plain text and suggested choices are conveniences, not limits on what you can show.',
     parameters: Type.Object({
       question: Type.String({ description: 'What you want to discuss.' }),
@@ -147,6 +154,7 @@ export default function threadroom(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: 'threadroom', label: 'Threadroom',
+    renderCall: renderDiscussionCall, renderResult,
     description: 'Participate in lasting discussions: read saved work and feedback, browse the outline/history, publish a contribution, reply beneath a node, or watch a node in this session. Waiting is optional and does not change the shared conversation. Action results carry identities, response provenance, durable links, and this session’s nearby participation state. Watches receive direct replies; deeper branches can be watched independently.',
     parameters: Type.Object({
       action: Type.Union(['read', 'browse', 'publish', 'reply', 'watch', 'unwatch', 'wait'].map((value) => Type.Literal(value))),
@@ -184,5 +192,5 @@ export default function threadroom(pi: ExtensionAPI) {
   });
 
   pi.registerCommand('threadroom', { description: 'Show Threadroom connectivity and this session’s watched discussions.',
-    async handler(_args, ctx) { const active = await use(ctx); ctx.ui.notify(JSON.stringify(active.adjacent()), 'info'); } });
+    async handler(_args, ctx) { const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info'); } });
 }
