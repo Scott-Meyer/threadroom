@@ -58,7 +58,7 @@ async function service(t) {
   fixtureParticipants.set(client, participants);
   t.after(async () => {
     try { await deadline(Promise.all([...participants].map((room) => room.close())), 3000, () => 'Participation shutdown deadline'); }
-    finally { try { await stop(); } finally { await rm(directory, { recursive: true, force: true }); } }
+    finally { try { await client.close(); } finally { try { await stop(); } finally { await rm(directory, { recursive: true, force: true }); } } }
   });
   await start();
   return { client, start, stop };

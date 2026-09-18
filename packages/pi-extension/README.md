@@ -33,7 +33,7 @@ The experimental `THREADROOM_REPLACE_ASK` API alias has been retired. Threadroom
 
 The current service is single-user and unauthenticated. Keep it local or use a trusted tunnel; author/session metadata is correlation, not permission. No production identity or authorized handoff claim is made here.
 
-Shared tools currently use the host's built-in `fetch`. On macOS, Node 24.18.0/Undici 7.28.0 has a [known socket-QoS crash](https://github.com/nodejs/undici/issues/5544) that can terminate Pi outside the fetch promise; isolated Node 24.21.0/Undici 7.29.1 still has the vulnerable call. A passing reconnect check does not remove this runtime risk. A fixed, scoped HTTP transport remains a follow-up; this beta does not replace global fetch or suppress process exceptions. Native asks do not make HTTP requests.
+Shared tools use owned Node HTTP/HTTPS connections, not host `fetch` or its global dispatcher. This avoids the [known Undici socket-QoS crash](https://github.com/nodejs/undici/issues/5544) without changing host networking or suppressing process exceptions. No new runtime dependency is needed. Native asks still make no HTTP requests; this does not fix unrelated uses of host fetch.
 
 ## Participation
 
@@ -57,6 +57,8 @@ Wait results carry the request snapshot that established the outcome, not the or
 
 Threadroom owns saved conversations and presentation isolation. Authored scripts can propose drafts, but host controls own saving feedback. Pi owns session participation and model-message delivery. Neither side grants generated content filesystem, terminal, or model credentials.
 
-The transport and participation modules under `src/` have no Pi or rendering imports. Another host can use them without implementing a Pi TUI. A future terminal UI can consume the same service; its integration point remains open.
+The Node transport and participation modules under `src/` have no Pi or rendering imports. Another Node host can use them without implementing a Pi TUI. Constructing a `ThreadroomClient` allocates no agents or connections; its first request opens its own HTTP/HTTPS pool. REST deadlines include the response body; SSE stays open until its signal, stream failure, or client closure. Redirects are not followed and HTTPS retains ordinary certificate verification.
+
+A consumer owns the client's lifetime: close its participants first, then `await client.close()`. Client closure cancels its active requests/streams and releases its sockets, is idempotent, and permanently rejects new requests; it does not affect another client. `Participation.close()` ends that subscription, not the reusable client. The Pi extension releases its outgoing client on quit/reload/session replacement, giving a replacement session a fresh lazy client. A future terminal UI can consume the same service; its integration point remains open.
 
 Captured presentations are immutable today. An evolving job dashboard or two-way live workspace needs an explicit service capability, not a hidden local server or a Pi-only conversation store. Hard CPU isolation, authentication, remote deployment, large-history scalability, notification preferences, and broader host lifecycle evidence remain unfinished.

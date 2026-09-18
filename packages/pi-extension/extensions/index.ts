@@ -20,9 +20,10 @@ export default function threadroom(pi: ExtensionAPI) {
   let running = false;
   let navigationTimer: ReturnType<typeof setTimeout> | undefined;
   let epoch = 0;
-  const client = new ThreadroomClient(process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310', {
-    uiUrl: process.env.THREADROOM_UI_URL || process.env.THREADROOM_API_URL || 'http://127.0.0.1:4311',
-  });
+  const apiUrl = process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310';
+  const uiUrl = process.env.THREADROOM_UI_URL || process.env.THREADROOM_API_URL || 'http://127.0.0.1:4311';
+  const makeClient = () => new ThreadroomClient(apiUrl, { uiUrl });
+  let client = makeClient();
 
   // Only active-branch, same-session checkpoints are inherited. Display names
   // and copied/forked histories do not automatically confer a live subscription.
@@ -97,7 +98,11 @@ export default function threadroom(pi: ExtensionAPI) {
   pi.on('session_start', async (_event, ctx) => { await bind(ctx); });
   pi.on('session_shutdown', async () => {
     ++epoch; clearTimeout(navigationTimer); navigationTimer = undefined;
-    const old = room; room = undefined; await old?.close();
+    const old = room; room = undefined;
+    // Session replacement can reuse this factory; the next session gets its own
+    // lazy client while outgoing HTTP work belongs to the captured old client.
+    const oldClient = client; client = makeClient();
+    try { await old?.close(); } finally { await oldClient.close(); }
   });
   pi.on('session_before_tree', () => { navigating = true; });
   pi.on('agent_start', () => { running = true; });

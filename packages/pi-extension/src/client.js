@@ -1,4 +1,5 @@
-// Rendering-independent transport; no Pi, website, or database dependencies.
+// Rendering-independent Node transport; no Pi, website, database or fetch globals.
+import { HttpTransport } from './http-transport.js';
 export class ThreadroomError extends Error {
   constructor(message, { status, ambiguous = false } = {}) {
     super(message); this.name = 'ThreadroomError'; this.status = status; this.ambiguous = ambiguous;
@@ -14,17 +15,29 @@ export class ThreadroomClient {
     this.baseUrl = url.href.replace(/\/$/, '');
     this.uiUrl = new URL(uiUrl).href.replace(/\/$/, '');
     this.timeoutMs = timeoutMs;
+    this.transport = new HttpTransport();
   }
+  /** Cancel this client's requests/streams and release its sockets. Permanent,
+   * idempotent, and independent of Participation.close() and other clients. */
+  close() { return this.transport.close(); }
   link(id) { return `${this.uiUrl}/threads/${encodeURIComponent(id)}`; }
   async request(path, { method = 'GET', input, key, signal } = {}) {
     const combined = AbortSignal.any([AbortSignal.timeout(this.timeoutMs), ...(signal ? [signal] : [])]);
     let response;
     try {
-      response = await fetch(`${this.baseUrl}${path}`, { method, signal: combined,
-        redirect: 'error', headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
+      response = await this.transport.open(`${this.baseUrl}${path}`, { method, signal: combined,
+        headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
         ...(input !== undefined ? { body: JSON.stringify(input) } : {}) });
-      const result = await response.json();
-      if (!response.ok) throw new ThreadroomError(result.error || `HTTP ${response.status}`, { status: response.status });
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        response.destroy();
+        throw new Error('Threadroom redirects are not followed.');
+      }
+      const chunks = [];
+      for await (const chunk of response) chunks.push(chunk);
+      const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new ThreadroomError(result.error || `HTTP ${response.statusCode}`, { status: response.statusCode });
+      }
       return result;
     } catch (error) {
       if (error instanceof ThreadroomError) throw error;
@@ -36,22 +49,20 @@ export class ThreadroomClient {
   respond(id, input, options = {}) { return this.request(`/api/nodes/${encodeURIComponent(id)}/respond`, { ...options, method: 'POST', input }); }
   tree(options) { return this.request('/api/tree', options); }
 
-  // Fetch-based SSE works in Node and supports cancellation/replay without EventSource.
+  // Owned Node SSE supports cancellation/replay without EventSource or fetch.
   async *events(after, signal, onOpen = () => {}) {
-    const response = await fetch(`${this.baseUrl}/api/stream?after=${after}`, { signal, redirect: 'error',
+    const response = await this.transport.open(`${this.baseUrl}/api/stream?after=${after}`, { signal,
       headers: { Accept: 'text/event-stream' } });
-    if (!response.ok || !response.headers.get('content-type')?.includes('text/event-stream')) {
-      await response.body?.cancel();
-      throw new ThreadroomError(`Threadroom stream failed (HTTP ${response.status})`);
+    if (response.statusCode < 200 || response.statusCode >= 300 ||
+        !response.headers['content-type']?.includes('text/event-stream')) {
+      response.destroy();
+      throw new ThreadroomError(`Threadroom stream failed (HTTP ${response.statusCode})`);
     }
-    onOpen();
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', data = [], eventType = '', frameSize = 0;
     try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) throw new ThreadroomError('Threadroom stream disconnected');
+      onOpen();
+      for await (const value of response) {
         buffer += decoder.decode(value, { stream: true });
         if (buffer.length > 1024 * 1024) throw new ThreadroomError('Threadroom stream frame exceeded 1 MiB');
         let newline;
@@ -69,7 +80,8 @@ export class ThreadroomClient {
           }
         }
       }
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      throw new ThreadroomError('Threadroom stream disconnected');
+    } finally { response.destroy(); }
   }
 }
 
