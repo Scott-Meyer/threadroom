@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { once } from 'node:events';
+import { once, EventEmitter } from 'node:events';
 import { ThreadStore } from '../src/store.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
@@ -13,6 +13,8 @@ import { createThreadroomServer } from '../src/server.js';
 import { ThreadroomClient } from '../public/client.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { ThreadroomClient as ParticipationClient } from '../packages/pi-extension/src/client.js';
+import { Participation } from '../packages/pi-extension/src/participation.js';
 
 async function runningService(database, options = {}) {
   const store = new ThreadStore(database);
@@ -547,5 +549,106 @@ test('the interaction playground publishes reproducible rich requests and three 
   } finally {
     if (service.server.listening) await service.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a replacement colleague explicitly adopts revision-scoped feedback without inheriting a newer review', { timeout: 10000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'threadroom-handoff-'));
+  const database = join(directory, 'records.sqlite');
+  let service = await runningService(database), replacement;
+  const oldAuthor = { name: 'Artist', id: 'test:artist', sessionId: 'test:old-session', role: 'Synthetic handoff evidence' };
+  const newAuthor = { ...oldAuthor, sessionId: 'test:replacement-session' };
+  const reviewer = { name: 'Automated TEST reviewer—not Scott', sessionId: 'test:reviewer' };
+  const original = new Participation(new ParticipationClient(service.url, { timeoutMs: 3000 }), { author: oldAuthor });
+  try {
+    const a = await original.publish({ project: 'Replacement recovery TEST', question: 'TEST review A: inspect this captured pass.',
+      html: '<h1>TEST pass A</h1><p>The original round silhouette.</p>', fallback: 'TEST pass A: round silhouette.', revision: 'review-a' });
+    const firstPresentation = (await new ThreadroomClient(service.url).read(a.node.id)).node.presentation;
+    assert.deepEqual(a.participation.watching, [a.node.id]);
+    await original.close();
+
+    let api = new ThreadroomClient(service.url);
+    const b = await api.publish({ parentId: a.node.id, question: 'TEST newer review B: this is a different pass, not approval of A.',
+      html: '<h1>TEST pass B</h1><p>A newer angular silhouette.</p>', fallback: 'TEST pass B: angular silhouette.', revision: 'newer-b',
+      author: { name: 'TEST pass author', sessionId: 'test:b-author' } });
+    assert.equal(b.node.response, null);
+    assert.equal(b.node.status, 'outstanding');
+    assert.equal((await api.read(a.node.id)).node.status, 'outstanding');
+    const feedbackA = await api.reply(a.node.id, { kind: 'clarification',
+      body: '[TEST automatic—not Scott] Question about pass A only: can its round outline keep the low posture?', author: reviewer });
+    assert.equal((await api.read(a.node.id)).node.status, 'waiting_on_team');
+    assert.equal((await api.read(b.node.id)).node.status, 'outstanding');
+
+    await service.close(); service = null;
+    service = await runningService(database);
+    api = new ThreadroomClient(service.url);
+    const sink = new EventEmitter(), deliveries = [];
+    replacement = new Participation(new ParticipationClient(service.url, { timeoutMs: 3000 }), { author: newAuthor,
+      deliver: (receipt) => { deliveries.push(receipt); sink.emit('receipt', receipt); } });
+    const readA = await replacement.read(a.node.id), readB = await replacement.read(b.node.id);
+    const recovered = await replacement.read(feedbackA.responseId);
+    for (const record of [readA, readB, recovered]) assert.deepEqual(record.participation.watching, []);
+    assert.deepEqual(deliveries, []);
+    assert.deepEqual(readA.node.author, oldAuthor);
+    assert.equal(readB.node.presentation.revision, 'newer-b');
+    assert.ok(readB.ancestors.some(node => node.id === a.node.id && node.status === 'waiting_on_team'));
+    assert.equal(recovered.node.body, feedbackA.node.body);
+    assert.deepEqual(recovered.node.response, { kind: 'clarification', selections: [], presentationRevision: 'review-a', targetId: a.node.id });
+    assert.deepEqual((await api.read(a.node.id)).node.presentation, firstPresentation);
+
+    const replayA = once(sink, 'receipt', { signal: AbortSignal.timeout(4000) });
+    await replacement.watch(a.node.id);
+    const [receiptA] = await replayA;
+    assert.deepEqual({ target: receiptA.target.node.id, revision: receiptA.target.node.presentation.revision,
+      status: receiptA.target.node.status, response: receiptA.responseId, context: receiptA.response.node.response }, {
+      target: a.node.id, revision: 'review-a', status: 'waiting_on_team', response: feedbackA.responseId,
+      context: recovered.node.response });
+    assert.deepEqual(receiptA.target.node.author, oldAuthor);
+    assert.deepEqual(receiptA.response.node.author, reviewer);
+    assert.equal(typeof receiptA.eventId, 'string');
+    assert.ok(Number.isSafeInteger(receiptA.sequence));
+    assert.deepEqual(replacement.snapshot().watches, [a.node.id]);
+    assert.ok(replacement.snapshot().cursor < receiptA.sequence);
+    // This is a real generic consumer sink, not a Pi transcript/FlightDeck receipt.
+    await writeFile(join(directory, 'consumer-receipts.json'), JSON.stringify(deliveries));
+    replacement.acknowledge([receiptA.responseId]);
+    assert.equal(replacement.adjacent().unconfirmedDeliveries, 0);
+    assert.ok(replacement.snapshot().cursor >= receiptA.sequence);
+    assert.equal((await replacement.read(b.node.id)).node.status, 'outstanding');
+
+    const replayB = once(sink, 'receipt', { signal: AbortSignal.timeout(4000) });
+    await replacement.watch(b.node.id);
+    const feedbackB = await api.reply(b.node.id, { body: '[TEST automatic—not Scott] Feedback applies to angular pass B only.', author: reviewer });
+    const [receiptB] = await replayB;
+    assert.deepEqual({ target: receiptB.target.node.id, response: receiptB.responseId, revision: receiptB.response.node.response.presentationRevision },
+      { target: b.node.id, response: feedbackB.responseId, revision: 'newer-b' });
+    assert.deepEqual(deliveries.map(receipt => receipt.responseId), [feedbackA.responseId, feedbackB.responseId]);
+    await writeFile(join(directory, 'consumer-receipts.json'), JSON.stringify(deliveries));
+    replacement.acknowledge([receiptB.responseId]);
+    assert.deepEqual(replacement.snapshot().watches, [a.node.id, b.node.id]);
+    assert.equal((await api.read(a.node.id)).node.status, 'waiting_on_team');
+    assert.equal((await api.read(b.node.id)).node.status, 'answered');
+    assert.deepEqual((await api.read(a.node.id)).node.presentation, firstPresentation);
+
+    const continued = await replacement.respond(a.node.id, { kind: 'team_reply', body: '[TEST] Replacement colleague follows up on A’s posture question.' });
+    assert.deepEqual(continued.node.author, newAuthor);
+    assert.equal(continued.node.response.presentationRevision, 'review-a');
+    assert.equal((await api.read(a.node.id)).node.status, 'outstanding');
+    assert.equal((await api.read(b.node.id)).node.status, 'answered');
+    assert.equal((await api.read(feedbackA.responseId)).node.body, feedbackA.node.body);
+    if (process.env.THREADROOM_HANDOFF_PROOF) await writeFile(process.env.THREADROOM_HANDOFF_PROOF, JSON.stringify({
+      kind: 'Real HTTP + exported Node client/Participation consumer recovery', syntheticNotScott: true,
+      actualPiTranscript: false, flightDeckSeat: false, authenticatedHandoff: false,
+      reviews: { a: a.node.id, b: b.node.id }, feedback: [feedbackA.responseId, feedbackB.responseId],
+      revisions: deliveries.map(receipt => receipt.response.node.response.presentationRevision),
+      originalAuthor: oldAuthor, replacementAuthor: newAuthor, continuation: continued.node.id,
+      checks: ['B publication does not answer A', 'offline A clarification survives service restart',
+        'same-name/new-session reads do not inherit watches', 'explicit A adoption replays its captured revision',
+        'sink confirmation releases the replay checkpoint', 'explicit B watch does not redeliver confirmed A feedback',
+        'B feedback does not clear A responsibility', 'replacement follows up on A without reopening B'], passed: true
+    }, null, 2));
+  } finally {
+    await original.close(); await replacement?.close();
+    await service?.close(); await rm(directory, { recursive: true, force: true });
   }
 });

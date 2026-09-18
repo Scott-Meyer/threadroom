@@ -65,6 +65,8 @@ This is opt-in and unreleased. Its default `threadroom_ask` tool coexists with t
 
 Actual-browser evidence additionally includes the image generator, proposal-versus-save distinction, a captured generated snapshot, and a question branched directly from the saved answer. A real CLI call also stayed waiting while its question arrived without a page refresh, then received the exact host-saved demo reply.
 
+A combined HTTP/Node participation check covers replacement-colleague recovery: after service restart, a same-name/new-session participant reads without inheriting watches, explicitly adopts the old review, and continues its clarification. Feedback on newer pass B neither clears pass A's responsibility nor rewrites its captured presentation. This is isolated synthetic consumer evidence, not an actual replacement Pi session, FlightDeck seat, or authenticated handoff.
+
 ## Spike limits
 
 This is **local single-user software without authentication or permissions**. Author names are labels, not verified identities. The GitHub repo is private; don't expose the service publicly yet.
