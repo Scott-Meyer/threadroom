@@ -24,6 +24,14 @@ node examples/publish-canvas.js
 
 This makes one API call to resolve/create `MistFall → Creatures → Mist creature → Procedural studies`, publish a question, and capture its authored interactive document. Tune/generate an illustrative image, propose it, then save written feedback or reject through the separate Threadroom controls. Saved parameters and PNG snapshot remain readable without running the canvas. Questions **and answers** can carry authored canvases.
 
+To try a normal question call that waits for your response:
+
+```sh
+node examples/ask-and-wait.js
+```
+
+It appears live in **Needs your answer**. Respond on the website; the CLI receives the saved reply. A timeout leaves the question available. Rerunning recovers the same example question; set `ASK_KEY` to start a fresh one.
+
 The MistFall art, authors, fog discussion, and explicitly marked browser-check responses are demo content, not real team approvals. The Threadroom feedback request is a real question for Scott.
 
 ## Backend contract
@@ -47,7 +55,7 @@ The public browser client is `public/client.js`; it has no rendering or persiste
 
 `npm test` exercises the public HTTP boundary: restart recovery, independent question state, response retries, clarification/team-reply lifecycle, one-call 25-deep nesting, branching from an answer, mixed request/response capabilities on the same node, live delivery to a blocking ask, timeout recovery, first-spike and typed-spike migration, and an independently hosted UI/API pair with authored question/answer records.
 
-Actual-browser evidence additionally includes the image generator, proposal-versus-save distinction, a captured generated snapshot, and a question branched directly from the saved answer.
+Actual-browser evidence additionally includes the image generator, proposal-versus-save distinction, a captured generated snapshot, and a question branched directly from the saved answer. A real CLI call also stayed waiting while its question arrived without a page refresh, then received the exact host-saved demo reply.
 
 ## Spike limits
 
