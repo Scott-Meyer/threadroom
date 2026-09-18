@@ -4,7 +4,9 @@ Keep everyday questions in Pi, and bring a shared discussion to Threadroom when 
 
 ## Private nonblocking asks
 
-`ask_user_question_async` leaves one question in the current Pi session/branch and returns immediately. Written context and suggested answers/previews are optional. Creation does not open a modal or steal editor focus. The person opens `/asks` to answer freely or use/edit a suggestion. Escape closes the UI without answering; the question stays pending and unsaved drafts are discarded.
+`ask_user_question_async` brings a private question into Pi’s normal input area automatically, while the AI continues working. Nonblocking describes the AI’s turn—not a hidden inbox the person has to discover. Written context and suggestions/previews are optional.
+
+Use ↑/↓ to select a visible suggestion and Enter to save it, Tab to edit it, or just type/paste a free reply. Shift+Tab switches pending questions without losing the current unsaved draft. Escape restores the chat editor and leaves the unanswered question prominently visible; `/asks [id]` reopens paused questions. Escape discards unsaved drafts, not the pending question. Other blocking Pi prompts temporarily take priority, then return focus to an open question; they do not reopen an explicitly paused one.
 
 Questions and answers are saved in the Pi transcript, not sent to the Threadroom API or its discoverable outline. Real submitted feedback retains its original prompt and stable answer identity, then steers a busy agent at a legal boundary or wakes an idle one. A closed Pi process cannot be woken by this extension; the original session can resume its saved questions and feedback. Copied/forked different-session transcripts do not inherit ownership. Native async currently requires interactive Pi TUI; RPC/print return an explicit unsupported-host result, not a human decline. Replies use a single-line input and previews are plain text.
 

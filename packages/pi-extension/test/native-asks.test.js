@@ -30,15 +30,18 @@ async function fixture(t) {
   let manager = SessionManager.inMemory(root);
   let mode = 'tui';
   let idle = true;
-  const deliveries = [], notices = [], dialogs = [], statuses = [];
-  const ui = { setStatus: (...args) => statuses.push(args), notify: (...args) => notices.push(args),
-    custom(factory) {
-      return new Promise((resolve) => {
-        const dialog = { resolve };
-        dialog.component = factory({ requestRender() {}, terminal: { rows: 40 } }, getTheme(), {}, resolve);
-        dialogs.push(dialog);
-      });
-    } };
+  const deliveries = [], notices = [], dialogs = [], statuses = [], widgets = [];
+  const editor = { getText: () => '', setText() {} };
+  let focus = editor;
+  const tui = { requestRender() {}, terminal: { rows: 40 }, getFocusedComponent: () => focus,
+    setFocus(value) { if (focus) focus.focused = false; focus = value; if (focus) focus.focused = true; } };
+  const ui = { setWidget(...args) {
+      widgets.push(args);
+      if (typeof args[1] === 'function') {
+        const component = args[1](tui, getTheme());
+        if (component.handleInput) dialogs.push({ component, resolve: (value) => component.close(value), options: args[2] });
+      }
+    }, setStatus: (...args) => statuses.push(args), notify: (...args) => notices.push(args) };
   Object.assign(loaded.runtime, {
     appendEntry: (type, data) => manager.appendCustomEntry(type, data),
     sendMessage(message, options) {
@@ -59,7 +62,7 @@ async function fixture(t) {
   const open = (id = '') => extension.commands.get('asks').handler(id, ctx());
   const tick = () => new Promise((done) => setImmediate(done));
   const entries = (type) => manager.getBranch().filter((entry) => entry.customType === type);
-  return { loaded, extension, SessionManager, getTheme, ctx, emit, ask, open, tick, entries, dialogs, deliveries, notices, statuses,
+  return { loaded, extension, SessionManager, getTheme, ctx, emit, ask, open, tick, entries, dialogs, deliveries, notices, statuses, widgets, tui, editor,
     get manager() { return manager; }, set manager(value) { manager = value; },
     set mode(value) { mode = value; }, set idle(value) { idle = value; } };
 }
@@ -79,7 +82,8 @@ test('loaded native boundary saves stable identities, leaves pending on Escape, 
   assert.equal((await f.ask('abort', 'Question', abort.signal)).details.saved, false);
   const created = await f.ask('call-1');
   assert.equal(created.details.status, 'pending');
-  assert.equal(f.dialogs.length, 0, 'creation never opens UI');
+  assert.equal(f.dialogs.length, 1, 'question opens automatically while the tool has already returned pending');
+  assert.equal(f.dialogs[0].options?.placement, 'aboveEditor', 'question is mounted in normal layout, not an overlay');
   assert.equal((await f.ask('call-1')).details.id, created.details.id);
   assert.equal(f.entries('threadroom.native.question.v1').length, 1, 'same call retry does not duplicate');
   assert.equal((await f.ask('call-1', 'Changed question')).details.status, 'identity_conflict');
@@ -89,7 +93,7 @@ test('loaded native boundary saves stable identities, leaves pending on Escape, 
   first.handleInput('\r'); first.handleInput('Unsubmitted draft'); first.handleInput('\x1b');
   await opening;
   assert.equal(f.entries('threadroom.native.answer.v1').length, 0);
-  assert.match(f.notices.at(-1)[0], /stays pending.*draft discarded/);
+  assert.match(f.notices.at(-1)[0], /stays visible and pending.*draft discarded/);
   const secondOpen = f.open(created.details.id); await f.tick();
   const second = f.dialogs[1].component;
   assert.doesNotMatch(stripVTControlCharacters(second.render(70).join('\n')), /Unsubmitted draft/);
@@ -169,7 +173,7 @@ test('native UI and saved transcript render untrusted text as data at actual Pi 
   const opening = f.open(); await f.tick();
   const dialog = f.dialogs.at(-1);
   const require = createRequire(pathToFileURL(resolve(sdk, 'package.json')));
-  const { visibleWidth } = await import(pathToFileURL(require.resolve('@earendil-works/pi-tui')).href);
+  const { visibleWidth, CURSOR_MARKER } = await import(pathToFileURL(require.resolve('@earendil-works/pi-tui')).href);
   const { CustomEntryComponent } = await host('dist/modes/interactive/components/custom-entry.js');
   const entry = f.entries('threadroom.native.question.v1')[0];
   const renderer = f.extension.entryRenderers.get(entry.customType);
@@ -177,7 +181,6 @@ test('native UI and saved transcript render untrusted text as data at actual Pi 
   for (const width of [20, 40, 80]) {
     for (const line of dialog.component.render(width)) { assert.doesNotMatch(line, /\n/); assert.ok(visibleWidth(line) <= width); }
   }
-  dialog.component.handleInput('\r'); // Open from the single-row inbox.
   dialog.component.handleInput('\t'); // A multiline suggestion becomes a single-line editable reply.
   for (const width of [20, 40, 80]) {
     for (const line of dialog.component.render(width)) { assert.doesNotMatch(line, /\n/); assert.ok(visibleWidth(line) <= width); }
@@ -186,7 +189,7 @@ test('native UI and saved transcript render untrusted text as data at actual Pi 
   for (const width of [20, 40, 80]) {
     for (const rendered of [dialog.component.render(width), component.render(width)]) {
       for (const line of rendered) assert.ok(visibleWidth(line) <= width);
-      const output = rendered.join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+      const output = rendered.join('\n').replaceAll(CURSOR_MARKER, '').replace(/\x1b\[[0-9;]*m/g, '');
       assert.doesNotMatch(output, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u);
     }
   }
@@ -194,6 +197,201 @@ test('native UI and saved transcript render untrusted text as data at actual Pi 
   dialog.component.handleInput('\x15'); dialog.component.handleInput('\t'); dialog.component.handleInput('\r'); await opening;
   const answer = f.entries('threadroom.native.answer.v1').at(-1).data.answer;
   assert.equal(answer.text, 'Quiet finish'); assert.equal(answer.selection.label, 'Quiet\nfinish');
+});
+
+test('automatic input-area choices, free writing, pending visibility and concurrent asks through the loaded host', options, async (t) => {
+  const f = await fixture(t);
+  const tool = f.extension.tools.get('ask_user_question_async').definition;
+  const question = await tool.execute('choices', { question: 'Which finish?', options: ['Quiet',
+    { label: 'Bright', preview: 'A bright finish.' }, 'Balanced'] }, undefined, () => {}, f.ctx());
+  const panel = f.dialogs[0].component;
+  const rendered = () => stripVTControlCharacters(panel.render(80).join('\n'));
+  assert.match(rendered(), /› 1\. Quiet/);
+  assert.match(rendered(), /Type something\./);
+  panel.handleInput('\x1b[B');
+  assert.match(rendered(), /› 2\. Bright/);
+  assert.match(rendered(), /A bright finish\./);
+  assert.equal(f.entries('threadroom.native.answer.v1').length, 0, 'navigation is not submission');
+  panel.handleInput('\r'); await f.tick();
+  const answer = f.entries('threadroom.native.answer.v1')[0].data;
+  assert.equal(answer.questionId, question.details.id);
+  assert.equal(answer.answer.optionIndex, 1);
+  assert.equal(answer.answer.selection.preview, 'A bright finish.');
+  assert.equal(answer.answer.text, 'Bright');
+  assert.equal(f.notices.length, 0, 'successful final save is not mislabeled as a pause');
+  const free = await f.ask('free-first');
+  const writing = f.dialogs.at(-1).component;
+  writing.handleInput('Keep my answer draft');
+  await f.ask('free-second', 'Another independent question?');
+  assert.equal(f.dialogs.length, 2, 'concurrent ask joins the existing panel');
+  assert.match(stripVTControlCharacters(writing.render(80).join('\n')), /Keep my answer draft/);
+  writing.handleInput('\x1b[Z');
+  assert.match(stripVTControlCharacters(writing.render(80).join('\n')), /Another independent question\?/);
+  writing.handleInput('\x1b[Z');
+  assert.match(stripVTControlCharacters(writing.render(80).join('\n')), /Keep my answer draft/);
+  writing.handleInput('\x1b'); await f.tick();
+  assert.equal(f.entries('threadroom.native.answer.v1').length, 1, 'Escape does not submit a draft');
+  const widget = f.widgets.at(-1)[1]({ terminal: { rows: 40 } }, f.getTheme());
+  assert.match(stripVTControlCharacters(widget.render(80).join('\n')), /What should I refine\?/);
+  assert.match(stripVTControlCharacters(widget.render(80).join('\n')), /Another independent question\?/);
+  await f.emit('agent_settled');
+  assert.equal(f.dialogs.length, 2, 'ongoing AI activity does not reopen an explicitly paused panel');
+  const reopened = f.open(free.details.id); await f.tick();
+  const resumed = f.dialogs.at(-1).component;
+  assert.doesNotMatch(stripVTControlCharacters(resumed.render(80).join('\n')), /Keep my answer draft/);
+  resumed.handleInput('My own wording'); resumed.handleInput('\r'); await reopened; await f.tick();
+  assert.equal(f.dialogs.length, 3, 'saving advances in the same panel to the remaining question');
+  assert.match(stripVTControlCharacters(f.dialogs.at(-1).component.render(80).join('\n')), /Another independent question\?/);
+});
+
+test('saving another pending question preserves the original free-answer draft', options, async (t) => {
+  const f = await fixture(t);
+  const first = await f.ask('draft-A', 'Question A?');
+  const panel = f.dialogs[0].component;
+  panel.handleInput('Draft for A');
+  const second = await f.ask('answer-B', 'Question B?');
+  panel.handleInput('\x1b[Z'); panel.handleInput('Reply for B'); panel.handleInput('\r'); await f.tick();
+  const saved = f.entries('threadroom.native.answer.v1')[0].data;
+  assert.equal(saved.questionId, second.details.id);
+  assert.equal(saved.answer.text, 'Reply for B');
+  assert.match(stripVTControlCharacters(panel.render(80).join('\n')), /Draft for A/);
+  assert.match(stripVTControlCharacters(panel.render(80).join('\n')), /Question A\?/);
+  panel.handleInput('\r'); await f.tick();
+  const original = f.entries('threadroom.native.answer.v1')[1].data;
+  assert.equal(original.questionId, first.details.id);
+  assert.equal(original.answer.text, 'Draft for A');
+});
+
+test('browsing choices and returning to writing does not replace a written draft', options, async (t) => {
+  const f = await fixture(t);
+  await f.extension.tools.get('ask_user_question_async').definition.execute('mode-draft',
+    { question: 'Which answer?', options: ['Suggested', 'Other'] }, undefined, () => {}, f.ctx());
+  const panel = f.dialogs[0].component;
+  panel.handleInput('My written draft'); panel.handleInput('\t'); panel.handleInput('\x1b[B'); panel.handleInput('\t');
+  assert.match(stripVTControlCharacters(panel.render(80).join('\n')), /My written draft/);
+  panel.handleInput('\r'); await f.tick();
+  assert.equal(f.entries('threadroom.native.answer.v1')[0].data.answer.text, 'My written draft');
+});
+
+test('each pending free reply retains its cursor and owns its undo history', options, async (t) => {
+  const f = await fixture(t);
+  await f.ask('cursor-A', 'Question A?');
+  const panel = f.dialogs[0].component;
+  panel.handleInput('Alpha'); panel.handleInput(' '); panel.handleInput('A'); panel.handleInput('\x1b[D');
+  await f.ask('undo-B', 'Question B?');
+  panel.handleInput('\x1b[Z'); panel.handleInput('\x1b[45;5u');
+  assert.doesNotMatch(stripVTControlCharacters(panel.render(80).join('\n')), /Alpha/, 'undo does not reveal another question’s reply');
+  panel.handleInput('\x1b[Z'); panel.handleInput('X'); panel.handleInput('\r'); await f.tick();
+  assert.equal(f.entries('threadroom.native.answer.v1')[0].data.answer.text, 'Alpha XA', 'switching questions preserves the cursor');
+});
+
+test('whole inline panel fits short terminals and all selected preview text remains scrollable', options, async (t) => {
+  const f = await fixture(t);
+  const preview = Array.from({ length: 25 }, (_, i) => `PREVIEW_${i}_END`).join('\n');
+  await f.extension.tools.get('ask_user_question_async').definition.execute('short-terminal',
+    { question: 'A long question? '.repeat(35), context: 'Some longer context. '.repeat(20),
+      options: [{ label: 'Selected', preview }, ...Array.from({ length: 19 }, (_, i) => `Choice ${i}`)] }, undefined, () => {}, f.ctx());
+  const panel = f.dialogs[0].component;
+  for (const rows of [40, 24, 18]) {
+    f.tui.terminal.rows = rows;
+    let seen = '';
+    panel.handleInput('\x1b[5~'); // PageUp; scrolling is bounded to the current detail range.
+    for (let page = 0; page < 100; page++) {
+      const rendered = panel.render(80);
+      assert.ok(rendered.length <= Math.max(4, Math.min(20, rows - 12)), `${rows}-row terminal reserves Pi chrome`);
+      seen += stripVTControlCharacters(rendered.join('\n')) + '\n';
+      panel.handleInput('\x1b[6~');
+    }
+    // Start at the top independently of whichever scroll window the resize retained.
+    for (let page = 0; page < 100; page++) { seen += stripVTControlCharacters(panel.render(80).join('\n')); panel.handleInput('\x1b[5~'); }
+    for (let i = 0; i < 25; i++) assert.ok(seen.includes(`PREVIEW_${i}_END`), `${rows} rows: preview line ${i} reachable`);
+  }
+});
+
+test('full selected labels use terminal-cell width, including CJK and two-digit choice prefixes', options, async (t) => {
+  const f = await fixture(t);
+  const wide = '界'.repeat(40) + ' LAST_CJK_DETAIL';
+  const tenth = 'x'.repeat(57) + ' LAST_TENTH_DETAIL'; // 75 cells, plus a six-cell prefix.
+  await f.extension.tools.get('ask_user_question_async').definition.execute('cell-width',
+    { question: 'Inspect the complete label?', options: [wide, ...Array.from({ length: 8 }, () => 'Short'), tenth] }, undefined, () => {}, f.ctx());
+  const panel = f.dialogs[0].component;
+  f.tui.terminal.rows = 18;
+  for (const [down, distinguishing] of [[0, 'LAST_CJK_DETAIL'], [9, 'LAST_TENTH_DETAIL']]) {
+    for (let i = 0; i < down; i++) panel.handleInput('\x1b[B');
+    let seen = '';
+    for (let page = 0; page < 20; page++) {
+      seen += stripVTControlCharacters(panel.render(80).join('\n'));
+      panel.handleInput('\x1b[6~');
+    }
+    assert.ok(seen.includes(distinguishing), `selected label’s distinguishing detail remains reachable: ${distinguishing}`);
+  }
+});
+
+test('paste and Kitty printable keys start a free reply directly from choices', options, async (t) => {
+  const f = await fixture(t);
+  const tool = f.extension.tools.get('ask_user_question_async').definition;
+  for (const [call, key, text] of [['paste-choice', '\x1b[200~Pasted reply\x1b[201~', 'Pasted reply'],
+    ['kitty-choice', '\x1b[97u', 'a']]) {
+    await tool.execute(call, { question: 'What next?', options: ['Default choice'] }, undefined, () => {}, f.ctx());
+    const panel = f.dialogs.at(-1).component;
+    panel.handleInput(key); panel.handleInput('\r'); await f.tick();
+    const answer = f.entries('threadroom.native.answer.v1').at(-1).data.answer;
+    assert.equal(answer.text, text);
+    assert.equal(answer.selection, undefined, 'written text is not mistaken for the default choice');
+  }
+});
+
+test('inline questions yield focus to other host prompts in either creation order without stranding a UI promise', options, async (t) => {
+  const f = await fixture(t);
+  await f.ask('before-prompt'); await f.tick();
+  const panel = f.dialogs.at(-1).component;
+  assert.equal(f.tui.getFocusedComponent(), panel);
+  await f.emit('ui_prompt_start');
+  assert.equal(f.tui.getFocusedComponent(), f.editor);
+  const foreign = {};
+  f.tui.setFocus(foreign);
+  await f.ask('during-prompt', 'Created during another prompt?'); await f.tick();
+  assert.equal(f.tui.getFocusedComponent(), foreign, 'async creation does not steal another prompt');
+  assert.match(stripVTControlCharacters(panel.render(80).join('\n')), /waiting for the current Pi prompt/);
+  f.tui.setFocus(f.editor); await f.emit('ui_prompt_end');
+  assert.equal(f.tui.getFocusedComponent(), panel, 'native reply becomes available again automatically');
+  panel.handleInput('Answer the first'); panel.handleInput('\r'); await f.tick();
+  const next = f.dialogs.at(-1).component;
+  assert.match(stripVTControlCharacters(next.render(80).join('\n')), /Created during another prompt\?/);
+  next.handleInput('\x1b'); await f.tick();
+  const pausedCount = f.dialogs.length;
+  await f.emit('ui_prompt_start'); f.tui.setFocus(foreign);
+  f.tui.setFocus(f.editor); await f.emit('ui_prompt_end');
+  assert.equal(f.dialogs.length, pausedCount, 'an unrelated prompt does not undo explicit Escape pause');
+  assert.equal(f.tui.getFocusedComponent(), f.editor);
+  await f.emit('ui_prompt_start'); f.tui.setFocus(foreign);
+  await f.ask('new-during-prompt', 'A new question while busy?'); await f.tick();
+  assert.equal(f.tui.getFocusedComponent(), foreign);
+  assert.match(stripVTControlCharacters(f.dialogs.at(-1).component.render(80).join('\n')), /waiting for the current Pi prompt/);
+  f.tui.setFocus(f.editor); await f.emit('ui_prompt_end');
+  assert.equal(f.tui.getFocusedComponent(), f.dialogs.at(-1).component);
+});
+
+test('selectors outside extension prompt spans retain focus, then automatically return to an open question', options, async (t) => {
+  const f = await fixture(t);
+  const selector = {};
+  f.tui.setFocus(selector);
+  await f.ask('built-in-first'); await f.tick();
+  const panel = f.dialogs.at(-1).component;
+  assert.equal(f.tui.getFocusedComponent(), selector, 'a new ask does not claim selector focus');
+  assert.match(stripVTControlCharacters(panel.render(80).join('\n')), /waiting for the current Pi prompt/);
+  f.tui.setFocus(f.editor); panel.render(80);
+  assert.equal(f.tui.getFocusedComponent(), panel, 'host render after selector closure restores an open question');
+  f.tui.setFocus(selector); panel.render(80);
+  assert.equal(f.tui.getFocusedComponent(), selector, 'an already-open question also yields to a selector');
+  f.tui.setFocus(f.editor); panel.render(80);
+  assert.equal(f.tui.getFocusedComponent(), panel);
+  panel.handleInput('\x1b'); await f.tick();
+  const count = f.dialogs.length;
+  f.tui.setFocus(selector); f.tui.setFocus(f.editor);
+  const paused = f.widgets.at(-1)[1](f.tui, f.getTheme()); paused.render(80);
+  assert.equal(f.tui.getFocusedComponent(), f.editor, 'a paused card never regains focus');
+  assert.equal(f.dialogs.length, count);
 });
 
 test('installed Pi PTY: focus, streaming UI, wake, real saved receipt and resume', {

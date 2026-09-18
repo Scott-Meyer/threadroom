@@ -1,6 +1,6 @@
 # Pi host adapter
 
-`index.ts` binds Threadroom participation to Pi's tool, session, and message lifecycle. The shared conversation and authored interaction stay in the independent service; Pi presents a readable window onto them, not another questionnaire.
+`index.ts` registers private native asks and binds Threadroom participation to Pi's tool, session, and message lifecycle. Native asks live in the Pi transcript and automatically present an interactive widget above the editor; creation does not wait for the reply. The widget owns only its focus, yields to other blocking host prompts, and never replaces an editor or holds a custom-UI promise. `/asks` reopens deliberately paused questions. The shared conversation and authored interaction stay in the independent service; Pi presents a readable window onto them, not another questionnaire.
 
 Tool rows and saved-feedback messages show the discussion title, durable website address, and what happened. Expand a row for nearby saved context, provenance labels, receipt identities and participation state. Authored programs never render as terminal source. The original tool result and message details remain unchanged for the model and session replay.
 

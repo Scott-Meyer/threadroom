@@ -44,7 +44,7 @@ def probe():
 
 def start(extra=[]):
     ready = sum(e['event'] == 'ready' for e in events())
-    c = pexpect.spawn(pi, base + extra, cwd=root, env=env, encoding='utf-8', dimensions=(40, 110), timeout=12)
+    c = pexpect.spawn(pi, base + extra, cwd=root, env=env, encoding='utf-8', dimensions=(24, 80), timeout=12)
     c.logfile = open(dir / ('terminal-resume.txt' if extra else 'terminal.txt'), 'w')
     end = time.time() + 15
     while sum(e['event'] == 'ready' for e in events()) <= ready:
@@ -69,20 +69,30 @@ try:
     ask_end = next(e for e in events() if e['event'] == 'tool_end' and e['name'] == 'ask_user_question_async')
     assert ask_end['result']['details']['status'] == 'pending', ask_end
     assert ask_end['editor'] == 'FOCUS_DRAFT', ask_end
-    assert not any(e['event'] == 'ui_prompt_start' for e in events()), 'creation took input focus'
-    # /asks is intentionally opened while independent work is still running.
-    send('\x15/asks\r')
-    wait(lambda: any(e['event'] == 'ui_prompt_start' for e in events()), '/asks did not open native UI')
-    send('\r')  # select inbox item
+    assert any(e['event'] == 'question_shown' and e['placement'] == 'aboveEditor' for e in events()), 'pending question did not automatically open inline'
+    first_show = next(i for i, e in enumerate(events()) if e['event'] == 'question_shown')
+    work_start = next(i for i, e in enumerate(events()) if e['event'] == 'work_started')
+    assert not any(e['event'] == 'ui_prompt_start' for e in events()[:work_start]), 'native ask created a blocking UI span'
+    assert first_show < work_start, 'independent work did not proceed with question already open'
+    wait(lambda: any(e['event'] == 'ui_prompt_start' for e in events()), 'continuing AI did not open other prompt')
+    send('Foreign accepted\r')
+    wait(lambda: any(e['event'] == 'foreign_finished' for e in events()), 'other prompt was stranded by native question')
+    assert next(e for e in events() if e['event'] == 'foreign_finished')['other'] == 'Foreign accepted'
+    # AI's independent work is held while its automatically opened question accepts a reply.
+    child.setwinsize(18, 80)  # keep the inline question usable after a short resize
+    send('\x1b[B'); send('\x1b[A')
+    child.setwinsize(24, 80)
+    send('\t')  # edit the visibly selected suggestion
     send('DISCARDED_DRAFT')
     send('\x1b')
-    wait(lambda: any(e['event'] == 'ui_prompt_end' for e in events()), 'Escape did not close UI')
-    send('/asks\r')
-    wait(lambda: sum(e['event'] == 'ui_prompt_start' for e in events()) == 2, 'dismissed question could not reopen')
-    send('\r')
+    wait(lambda: len([e for e in events() if e['event'] == 'question_paused']) >= 2, 'Escape did not pause UI')
+    assert [e for e in events() if e['event'] == 'question_paused'][-1]['editor'] == 'FOCUS_DRAFT', 'Escape did not preserve original editor draft'
+    # Escape restores the existing chat draft; /asks is only the explicit paused-panel path.
+    send('\x15/asks\r')
+    wait(lambda: sum(e['event'] == 'question_shown' for e in events()) == 2, 'dismissed question could not reopen')
     send('Refine the tail freely\r')
     # Save happened while original tool is still running; queued steer isn't yet a receipt.
-    send('/native-probe\r')
+    send('\x15/native-probe\r')
     wait(lambda: any(e['event'] == 'probe' for e in events()), 'probe during work did not run')
     branch = [e for e in events() if e['event'] == 'probe'][-1]['branch']
     saved = [e for e in branch if e['type'] == 'custom' and e.get('customType') == 'threadroom.native.answer.v1']
@@ -119,15 +129,44 @@ try:
     branch = [e for e in events() if e['event'] == 'probe'][-1]['branch']
     receipt = [e for e in branch if e['type'] == 'custom_message' and e.get('customType') == 'threadroom.native.feedback.v1']
     assert len(receipt) == 1 and receipt[0]['details']['answerId'] == answer['answerId'], receipt
+    # Built-in selectors are not extension UI spans. Async creation cannot
+    # hijack them; their ordinary close/render returns to the open native ask.
+    for selector in ['settings', 'model']:
+        prior = sum(e['event'] == 'feedback_seen' for e in events())
+        spans = sum(e['event'] == 'ui_prompt_start' for e in events())
+        send('/native-seed-delayed ' + selector + '\r')
+        send('/' + selector + (' native-test' if selector == 'model' else '') + '\r')
+        wait(lambda: any(e['event'] == 'delayed_seed' and e['selector'] == selector for e in events()), 'async creation during built-in selector failed')
+        assert sum(e['event'] == 'ui_prompt_start' for e in events()) == spans, 'test did not exercise a built-in selector outside UI spans'
+        send('\x1b')  # close the actual built-in selector, NOT pause the native question
+        send('Reply after ' + selector + '\r')
+        wait(lambda: sum(e['event'] == 'feedback_seen' for e in events()) > prior, 'question did not regain focus after /' + selector)
+        branch = probe()['branch']
+        question = next(e for e in events() if e['event'] == 'delayed_seed' and e['selector'] == selector)['result']['details']['id']
+        answer_after = next(e['data']['answer']['text'] for e in branch if e.get('customType') == 'threadroom.native.answer.v1' and e['data']['questionId'] == question)
+        assert answer_after == 'Reply after ' + selector, answer_after
     prior = sum(e['event'] == 'feedback_seen' for e in events())
     send('/native-seed-idle\r')
     wait(lambda: any(e['event'] == 'idle_seed' for e in events()), 'idle follow-up creation failed')
-    send('/asks\r'); send('\r'); send('\t'); send('\r')
+    send('\r')  # visibly selected suggestion; no /asks or typed number required
     wait(lambda: sum(e['event'] == 'feedback_seen' for e in events()) > prior, 'idle saved answer did not wake AI')
     send('/native-probe\r')
     branch = [e for e in events() if e['event'] == 'probe'][-1]['branch']
-    idle_answers = [e['data'] for e in branch if e.get('customType') == 'threadroom.native.answer.v1' and e['data']['questionId'] != answer['questionId']]
+    idle_question = next(e for e in events() if e['event'] == 'idle_seed')['result']['details']['id']
+    idle_answers = [e['data'] for e in branch if e.get('customType') == 'threadroom.native.answer.v1' and e['data']['questionId'] == idle_question]
     assert len(idle_answers) == 1 and idle_answers[0]['answer']['selection']['preview'] == 'A soft finish.', idle_answers
+    prior = sum(e['event'] == 'feedback_seen' for e in events())
+    send('/native-seed-during-prompt\r')
+    wait(lambda: any(e['event'] == 'during_prompt_seed' for e in events()), 'question creation during another prompt failed')
+    send('Other first\r')
+    wait(lambda: any(e['event'] == 'foreign_seed_finished' for e in events()), 'native creation displaced an existing prompt')
+    assert next(e for e in events() if e['event'] == 'foreign_seed_finished')['answer'] == 'Other first'
+    send('\x1b[B'); send('\r')  # select Second with ordinary arrows, no typed number.
+    wait(lambda: sum(e['event'] == 'feedback_seen' for e in events()) > prior, 'native question did not regain input after other prompt')
+    branch = probe()['branch']
+    created = next(e for e in events() if e['event'] == 'during_prompt_seed')['result']['details']['id']
+    selected = next(e['data']['answer'] for e in branch if e.get('customType') == 'threadroom.native.answer.v1' and e['data']['questionId'] == created)
+    assert selected['optionIndex'] == 1 and selected['text'] == 'Second', selected
     prior = sum(e['event'] == 'feedback_seen' for e in events())
     send('/native-tree-recover\r')
     wait(lambda: any(e['event'] == 'tree_finished' for e in events()), 'real tree navigation did not settle')
@@ -150,4 +189,4 @@ try:
     assert sum(e['event'] == 'feedback_seen' for e in events()) == prior_feedback, 'saved receipt replayed wake after resume'
 finally:
     stop()
-print('Native TUI: immediate return, unchanged editor, voluntary open, Escape/reopen, saved-before-steer, idle wake, real receipt and resume verified.')
+print('Native TUI: immediate return, preserved editor draft, automatic input-area question and selectable choices, other prompts in both creation orders, Escape/reopen, saved-before-steer, idle wake, real receipt and resume verified.')

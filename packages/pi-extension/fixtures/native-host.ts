@@ -6,11 +6,45 @@ export default function fixture(pi: any) {
   const log = (value: any) => appendFileSync(process.env.NATIVE_TEST_LOG!, JSON.stringify(value) + '\n');
   globalThis.fetch = ((...args: any[]) => { log({ event: 'fetch', args }); throw new Error('Native test forbids HTTP'); }) as any;
   let nativeAsk: any;
-  registerNativeAsks({ ...pi, registerTool(definition: any) { nativeAsk = definition; pi.registerTool(definition); } });
+  const instrument = (ctx: any) => ({ ...ctx, ui: { ...ctx.ui,
+    setWidget(key: string, content: any, options: any) {
+      let shown = false;
+      ctx.ui.setWidget(key, typeof content === 'function' ? (tui: any, theme: any) => {
+        const component = content(tui, theme);
+        shown = !!component.handleInput;
+        return component;
+      } : content, options);
+      if (key === 'native-asks' && content) log({ event: shown ? 'question_shown' : 'question_paused',
+        placement: options?.placement ?? 'aboveEditor', editor: ctx.ui.getEditorText() });
+    },
+  } });
+  registerNativeAsks({ ...pi,
+    on(name: string, handler: any) { pi.on(name, (event: any, ctx: any) => handler(event, instrument(ctx))); },
+    registerCommand(name: string, definition: any) { pi.registerCommand(name,
+      { ...definition, handler: (args: any, ctx: any) => definition.handler(args, instrument(ctx)) }); },
+    registerTool(definition: any) {
+      nativeAsk = { ...definition, execute: (id: any, args: any, signal: any, update: any, ctx: any) =>
+        definition.execute(id, args, signal, update, instrument(ctx)) };
+      pi.registerTool(nativeAsk);
+    },
+  });
   pi.registerCommand('native-seed-idle', { description: 'Test fixture only', async handler(_args: any, ctx: any) {
     const result = await nativeAsk.execute('native-idle-ask', { question: 'An idle follow-up?',
       options: [{ label: 'Soft', preview: 'A soft finish.' }] }, undefined, () => {}, ctx);
     log({ event: 'idle_seed', result });
+  } });
+  pi.registerCommand('native-seed-during-prompt', { description: 'Test fixture only', async handler(_args: any, ctx: any) {
+    const other = ctx.ui.input('FOREIGN_PROMPT_BEFORE_NATIVE').then((answer: any) => log({ event: 'foreign_seed_finished', answer }));
+    const result = await nativeAsk.execute('native-during-prompt-ask', { question: 'Created during another prompt?',
+      options: ['First', 'Second'] }, undefined, () => {}, ctx);
+    log({ event: 'during_prompt_seed', result });
+    await other;
+  } });
+  pi.registerCommand('native-seed-delayed', { description: 'Test fixture only', handler(args: string, ctx: any) {
+    setTimeout(async () => {
+      const result = await nativeAsk.execute(`native-delayed-${args}`, { question: `Question arriving during /${args}?` }, undefined, () => {}, ctx);
+      log({ event: 'delayed_seed', selector: args, result });
+    }, 700);
   } });
   pi.on('session_before_tree', () => ({ summary: { summary: 'Native test branch summary.' } }));
   pi.on('session_tree', (_event: any, ctx: any) => log({ event: 'tree_emitted', idle: ctx.isIdle() }));
@@ -34,8 +68,10 @@ export default function fixture(pi: any) {
     ctx.ui.notify('NATIVE_PROBE_SAVED', 'info');
   } });
   pi.registerTool({ name: 'native_test_work', label: 'Independent work', description: 'Test work continues independently.',
-    parameters: { type: 'object', properties: {} }, async execute() {
+    parameters: { type: 'object', properties: {} }, async execute(_id: any, _args: any, _signal: any, _update: any, ctx: any) {
       log({ event: 'work_started' });
+      const other = await ctx.ui.input('FOREIGN_BLOCKING_PROMPT');
+      log({ event: 'foreign_finished', other });
       const start = Date.now();
       while (!existsSync(process.env.NATIVE_TEST_RELEASE!) && Date.now() - start < 20000) await new Promise((done) => setTimeout(done, 50));
       log({ event: 'work_finished' });
