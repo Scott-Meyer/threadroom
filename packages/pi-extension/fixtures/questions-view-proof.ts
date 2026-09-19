@@ -104,6 +104,7 @@ export default function(pi: any) {
         setWidget(_key: string, factory: any) { if (factory) widget = factory(noRawTui, ctx.ui.theme); else widget?.dispose(); },
       } });
       noRaw.enqueue({ id: 'NO_RAW', mode: 'async', questions: [question], commit() {} }); await Promise.resolve(); widget.render(80);
+      assert.equal(focus, ordinary, 'async arrival stays passive with public core identity'); assert.equal(noRaw.activate(), true);
       widget.handleInput('\x1d'); assert.doesNotMatch(widget.render(80).join('\n'), /Collapsed/, 'collapse is unavailable without an editor-level reopen hook');
       widget.handleInput('visible'); assert.equal(noRaw.snapshot().current!.reply, 'visible', 'unsupported collapse cannot swallow input into a hidden draft');
       for (const [width, rows] of [[25, 24], [80, 18]]) {

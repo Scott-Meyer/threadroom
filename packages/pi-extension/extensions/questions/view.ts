@@ -10,6 +10,8 @@ export type QuestionFrame = { header: string[]; lines: string[]; focus: [number,
  * Returns complete frame content/geometry; the host owns its bounded viewport. */
 export class QuestionView {
   focused = false;
+  /** A known Pi prompt temporarily owns input while this pane stays projected. */
+  suspended = false;
   /** Focus hints exist only when the host owns the complete public route.
    * These flags affect presentation, never drafts. */
   chatFocused = false;
@@ -53,9 +55,10 @@ export class QuestionView {
     return editors;
   }
   private tabs(width: number, current: QuestionState) {
-    const tabs = this.model.tabs(), at = tabs.findIndex((tab) => tab.key === current.tab.key && tab.incarnation === current.tab.incarnation);
+    const tabs = this.model.tabs(), blocking = tabs.some((tab) => tab.mode === 'blocking');
+    const at = tabs.findIndex((tab) => tab.key === current.tab.key && tab.incarnation === current.tab.incarnation);
     const label = (index: number) => {
-      const tab = tabs[index], mode = tab.mode === 'blocking' ? 'Ask' : 'Async';
+      const tab = tabs[index], mode = tab.mode === 'blocking' ? '★ Required' : 'Async';
       const title = tab.review ? 'review' : tab.header ? truncateToWidth(readable(tab.header).replace(/\s+/gu, ' ').trim(), 24, '') : String(index + 1);
       return `${index === at ? '›' : ''}[${mode} ${title}]`;
     };
@@ -67,7 +70,7 @@ export class QuestionView {
       if (nextRight && visibleWidth(nextRight) <= width) { questions = nextRight; right++; continue; }
       break;
     }
-    return this.theme.fg('accent', truncateToWidth(questions, width, ''));
+    return this.theme.fg(blocking ? 'warning' : 'accent', truncateToWidth(questions, width, ''));
   }
   private keyLabel(key: string) {
     return key.split('+').map((part) => ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta', tab: 'Tab' })[part.toLowerCase()] || (part.length === 1 ? part.toUpperCase() : part)).join('+');
@@ -80,13 +83,20 @@ export class QuestionView {
     const current = this.model.current();
     if (!current) return { header: [], lines: [], focus: [0, 1], footer: '' };
     const wrap = (text: unknown) => new Text(readable(text), 0, 0).render(width);
+    const blocking = this.model.tabs().some((tab) => tab.mode === 'blocking');
     const header = [this.tabs(width, current)];
-    const toggle = this.focusToggleKey && this.keyLabel(this.focusToggleKey);
-    const collapse = this.chatReturnKey && this.keyLabel(this.chatReturnKey);
+    if (blocking) header.push(this.theme.fg('warning', truncateToWidth('★ Response required · Chat waits for an answer or cancellation', width, '')));
+    const toggle = !blocking && this.focusToggleKey && this.keyLabel(this.focusToggleKey);
+    const collapse = !blocking && this.chatReturnKey && this.keyLabel(this.chatReturnKey);
     const questionNavigation = `Tab next question${toggle ? ` · ${toggle} ${this.inputIsCore ? 'Chat' : 'previous input'}` : ''}`;
-    const questionFooter = `${current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? 'Alt+N notes · ' : ''}${questionNavigation}${collapse ? ` · ${collapse} collapse` : ''} · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel'}`;
-    const chatFooter = `${this.inputIsCore && this.chatFocused ? 'Chat editor · Tab completion' : 'Input outside questions'}${this.entryAvailable ? toggle ? ` · ${toggle} questions` : ' · /asks selects questions' : ' · Question focus unavailable'}${collapse ? ` · ${collapse} returns to questions` : ''}`;
-    const footer = this.theme.fg('dim', truncateToWidth(this.focused ? questionFooter : chatFooter, width, ''));
+    const notes = current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? ' · Alt+N notes' : '';
+    const questionFooter = blocking
+      ? `Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel request'} · Tab next question${notes} · PgUp/Dn details`
+      : `${notes ? 'Alt+N notes · ' : ''}${questionNavigation}${collapse ? ` · ${collapse} collapse` : ''} · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel request'}`;
+    const chatFooter = blocking
+      ? this.suspended ? '★ Response required · waiting for current Pi prompt' : '★ Response required · returning to questions'
+      : `${this.inputIsCore && this.chatFocused ? 'Chat editor · Tab completion' : 'Input outside questions'}${this.entryAvailable ? toggle ? ` · ${toggle} questions` : ' · /asks selects questions' : ' · Question focus unavailable'}${collapse ? ` · ${collapse} returns to questions` : ''}`;
+    const footer = this.theme.fg(blocking ? 'warning' : 'dim', truncateToWidth(this.focused ? questionFooter : chatFooter, width, ''));
     if (current.error || current.saving) header.push(this.theme.fg('warning', truncateToWidth(current.saving ? 'Saving answer…' : current.errorCode === 'storage_unconfirmed' ? 'Storage unconfirmed · PgDn details' : 'Save failed · draft retained · PgDn details', width, '')));
     if (current.paused) return { header, lines: wrap(`Paused; this question remains pending.${this.entryAvailable ? ' /asks resumes it.' : ' Draft retained.'}`), focus: [0, 1], footer };
     if (current.tab.review) {

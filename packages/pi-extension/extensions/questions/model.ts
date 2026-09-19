@@ -58,6 +58,10 @@ export class QuestionModel {
     const at = tabs.findIndex((tab) => tab.key === current.tab.key), tab = tabs[(at + delta + tabs.length) % tabs.length];
     this.select(tab.groupId, tab.questionId);
   }
+  /** Tabs whose groups have not been paused, without changing selection. */
+  unpausedTabs(): readonly QuestionTab[] {
+    return Object.freeze(this.tabs().filter((tab) => !this.groups.get(tab.groupId)?.paused));
+  }
   private cell(): Cell | undefined {
     const current = this.current();
     return current && this.groups.get(current.tab.groupId)?.cells.find((cell) => cell.spec.id === current.tab.questionId);

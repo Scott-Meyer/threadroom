@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const sdk = process.env.THREADROOM_PI_SDK_ROOT;
-test('question tabs use Tab locally and a capability-gated focus toggle without synthetic Chat navigation labels', { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT', timeout: 30000 }, () => {
+test('async tabs stay passive while blockers make the shared question surface modal', { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT', timeout: 30000 }, () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const fixture = fileURLToPath(new URL('../fixtures/questions-navigation-proof.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [fixture, root, sdk], { encoding: 'utf8', timeout: 25000 });
@@ -26,12 +26,23 @@ test('question tabs use Tab locally and a capability-gated focus toggle without 
     foreignFocusRetained: true,
     replacementIdentityControl: true,
     foreignLifecycleControl: true,
+    asyncCoreArrivalPassive: true,
     stockPassiveExplicitLoan: true,
-    stockBlockerNoInterruption: true,
+    stockBlockerModal: true,
+    unifiedBlockingTabs: true,
+    modalReuseReset: true,
+    exactModalReturn: true,
+    replacementModalRebind: true,
+    explicitStockModalRebind: true,
+    paneOwnedAsyncFallback: true,
+    collapsedModalFallback: true,
+    deferredOverlayReturn: true,
+    retiredDeferredHandoff: true,
     stockLostOriginNoGuess: true,
     stockForeignSpanNativeKeys: true,
     passiveFooterUsesActualFocus: true,
     knownPromptHidesUnavailableRoutes: true,
+    truthfulSuspendedCopy: true,
     collapsedHintUsesAvailableRoute: true,
     suspendedProjectionInactive: true,
     oneShotGuards: true,

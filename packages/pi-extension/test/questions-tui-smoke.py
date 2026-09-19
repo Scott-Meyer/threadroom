@@ -63,7 +63,9 @@ try:
     native = [e['result']['details'] for e in events() if e['event'] == 'tool_end' and e['name'] == 'ask_user_question_async']
     assert len(native) == 2 and all(result['status'] == 'pending' for result in native)
     a, c = native
-    frame = observe(); assert current(frame)['tab']['questionId'] == a['id'], 'arrival stole active first question'
+    frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and frame['editorLike'], 'async arrival stole ordinary input focus'
+    assert frame['editor'] == 'KEEP_ORDINARY_EDITOR'
+    send('\x1b[Z'); frame = observe(); assert not frame['editorLike'], 'Shift+Tab did not enter the passive async pane'
     send('DRAFT_A'); frame = observe()
     assert all(value in '\n'.join(frame['lines']) for value in ['Quiet', 'Bright', 'DRAFT_A'])
     assert not any(e['event'] == 'work_finished' for e in events())
@@ -75,12 +77,13 @@ try:
     frame = observe(); assert current(frame)['reply'] == 'DRAFT_A EDITED '
     (directory / 'release').touch()
     wait(lambda: any(e['event'] == 'tool_start' and e['name'] == 'ask_user_question' for e in events()), 'blocking producer never started')
-    frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0'
+    frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike']
+    assert 'Response required' in '\n'.join(frame['lines'])
+    send('\x1d'); frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike'], 'collapse escaped the blocker'
+    send('\x1b[Z'); frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike'], 'focus toggle escaped the blocker'
     if matrix:
-        send('\x1d'); send('\x0c'); frame = observe()
-        assert not frame['editorLike'] and 'model' in '\n'.join(frame['lines']).lower(), 'real built-in Ctrl+L selector did not open'
-        send('\x1b'); frame = observe(); assert frame['editorLike']
-        send('\x1d'); frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike']
+        send('\x0c'); frame = observe()
+        assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike'] and 'Response required' in '\n'.join(frame['lines']), 'global model shortcut escaped the blocker'
         pathlib.Path(str(directory / 'release') + '.foreign').touch(); observe()
         wait(lambda: any(e['event'] == 'foreign_started' for e in events()), 'SDK foreign selector did not start')
         frame = observe(); assert 'TEST foreign selector' in '\n'.join(frame['lines'])
@@ -109,8 +112,9 @@ try:
     wait(lambda: any(e['event'] == 'settled' for e in events()), 'actual provider did not settle')
     send('\x1b'); send('\x15/reload\r')
     old_nonce = frame['nonce']; wait(lambda: any(e['event'] == 'ready' and e['nonce'] != old_nonce for e in events()), 'real reload did not produce fresh activation')
-    frame = observe(); assert frame['nonce'] != old_nonce and not frame['editorLike'] and current(frame)['tab']['questionId'] == c['id']
+    frame = observe(); assert frame['nonce'] != old_nonce and frame['editorLike'] and current(frame)['tab']['questionId'] == c['id']
     assert len([e for e in events() if e['event'] == 'test_setup']) == 1, 'reload used helper-prompt focus assistance'
+    send('\x1b[Z'); frame = observe(); assert not frame['editorLike']
     send('temp'); send('\x7f' * 4); send('\x1b[B')
     child.setwinsize(18, 80); send('\x1b[6~'); found = False
     for _ in range(40):
@@ -133,9 +137,9 @@ try:
         assert any(saved['answerId'] in json.dumps(e['feedback']) for e in events() if e['event'] == 'provider_feedback')
     proof = dict(syntheticNotScott=True, humanAcceptance=False, activated=False, freshOwnedImplementation=True, physicalPty=True,
                  privateDiskOriginalAssociations=True, actualProviderExactAnswerIds=True, matchingDiskReceiptsAfterExit=True,
-                 jointBlockingPriorityAndIndependentSave=True, bothDraftsCollapseExternalEditor=True, reviewPartialChecksOpenNotes=True,
+                 asyncArrivalPassive=True, blockingSurfaceModal=True, jointBlockingPriorityAndIndependentSave=True, bothDraftsCollapseExternalEditor=True, reviewPartialChecksOpenNotes=True,
                  hotReloadNoHelperPrompt=True, fullNativePreview80x18=True, coldResumeNotClaimed=True,
-                 builtinModelSelector=matrix, foreignSelectorIsolation=matrix, actualPreappendFailureDraftRetry=matrix,
+                 builtinModelShortcutBlocked=matrix, foreignSelectorIsolation=matrix, actualPreappendFailureDraftRetry=matrix,
                  observationQualification='Initial public custom setup once per process; F12 samples public focused render which may reconcile. IO/render overhead explicit.')
     (directory / 'proof.json').write_text(json.dumps(proof, indent=2) + '\n'); print(json.dumps(proof))
 finally:

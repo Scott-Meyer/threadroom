@@ -23,8 +23,8 @@ await assert.rejects(() => extension.tools.get('ask_user_question').definition.e
 const olderAsync = await extension.tools.get('ask_user_question_async').definition.execute('older-tui-async', { question: 'TEST older SDK async prompt?' }, undefined, () => {}, olderTui);
 assert.equal(olderAsync.details.status, 'unsupported_host'); assert.equal(olderAsync.details.saved, false);
 assert.equal(appends, 0, 'unsupported hosts cannot create question rows'); assert.equal(sends, 0);
-// Stock public UI port: no getCoreEditor, and deliberately no raw terminal hook.
-// Blocking-only /asks must still be a usable activation route through real MAIN.
+// Stock public UI port: no getCoreEditor and deliberately no raw terminal hook.
+// A blocker still claims the shared pane and returns to the exact input on abort.
 const { SessionManager } = await host('dist/core/session-manager.js');
 const themes = await host('dist/modes/interactive/theme/theme.js'); themes.initTheme('dark', false);
 const { TuiMainScreen, Editor } = await import(resolveSdkPeer(sdk, '@earendil-works/pi-tui'));
@@ -48,10 +48,10 @@ const abort = new AbortController();
 const blocker = extension.tools.get('ask_user_question').definition.execute('stock-blocking-only', { questions: [{ question: 'TEST stock blocker?', options: [{ label: 'One' }, { label: 'Two' }] }] }, abort.signal, () => {}, stock);
 const blockerOutcome = blocker.catch(error => error);
 await new Promise(done => setImmediate(done));
-assert.ok(widget); assert.equal(tui.getFocusedComponent(), input, 'stock blocking arrival must not interrupt input');
-assert.match(widget.render(120).join('\n'), /\/asks selects questions/);
+assert.ok(widget); assert.equal(tui.getFocusedComponent(), widget, 'stock blocking arrival must claim the shared question surface');
+const required = widget.render(120).join('\n'); assert.match(required, /★ Response required/); assert.doesNotMatch(required, /Shift\+Tab|collapse/);
 await extension.commands.get('asks').handler('', stock);
-assert.equal(tui.getFocusedComponent(), widget, 'blocking-only /asks works without getter or raw input hook');
+assert.equal(tui.getFocusedComponent(), widget, 'blocking-only /asks retains the required pane without getter or raw input hook');
 assert.equal(appends, 0, 'blocking activation is not an async question append');
 assert.equal(notices.length, 0, 'blocking-only /asks must not report no pending questions');
 abort.abort(); await blockerOutcome; await new Promise(done => setImmediate(done));
