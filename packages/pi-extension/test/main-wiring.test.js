@@ -8,5 +8,10 @@ test('actual package MAIN registers each owned private producer once while keepi
   const fixture = fileURLToPath(new URL('../fixtures/main-wiring-proof.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [fixture, root, sdk], { encoding: 'utf8', timeout: 25000 });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const proof = JSON.parse(result.stdout); assert.equal(proof.rawProducerRegistrationsExactlyOnce, true);
+  const proof = JSON.parse(result.stdout);
+  assert.equal(proof.rawProducerRegistrationsExactlyOnce, true);
+  assert.equal(proof.olderSdkCapabilityBoundary, true);
+  assert.equal(proof.stockBlockingOnlyAsks, true);
+  assert.equal(proof.stockAsyncPersistence, true);
+  assert.equal(proof.stockOriginalEditorCaret, true);
 });

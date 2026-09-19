@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveSdkPeer } from '../fixtures/sdk-peer.mjs';
 
 let sdk = process.env.THREADROOM_PI_SDK_ROOT;
 if (!sdk) {
@@ -18,7 +19,7 @@ const tick = () => new Promise((done) => setImmediate(done));
 
 async function fixture(t) {
   const { loadExtensions } = await host('dist/core/extensions/loader.js');
-  const { validateToolArguments } = await host('node_modules/@earendil-works/pi-ai/dist/utils/validation.js');
+  const { validateToolArguments } = await import(resolveSdkPeer(sdk, '@earendil-works/pi-ai'));
   const fixturePath = process.env.THREADROOM_QUESTIONS_TOOL_FIXTURE ?? resolve(root, 'packages/pi-extension/fixtures/questions-tool-proof.ts');
   const loaded = await loadExtensions([fixturePath], root);
   assert.deepEqual(loaded.errors, []);

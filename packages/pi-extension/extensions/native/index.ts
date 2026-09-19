@@ -73,6 +73,10 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   const receiptJournal = createReceiptJournal();
   let source: NativeQuestionSource | undefined;
   let projectionError: string | undefined, displayError: string | undefined;
+  function presentationAvailable(ctx: ExtensionContext) {
+    if (!options.presentation?.canPresent) return true;
+    try { return options.presentation.canPresent(ctx); } catch { return false; }
+  }
   function presentationFailed(ctx: ExtensionContext, error: unknown, phase: 'projection' | 'display') {
     const message = plain(error); if (phase === 'projection') projectionError = message; else displayError = message;
     try { ctx.ui.notify(`Private question presentation failed: ${message}. Saved questions remain pending; /asks retries.`, 'error'); } catch {}
@@ -140,6 +144,11 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       ctx.ui.setStatus('native-asks', state.storageUnconfirmed ? 'Private storage unconfirmed · recovery needed' : state.pending.length || waiting
         ? `Asks: ${state.pending.length} pending${waiting ? ` · ${waiting} saved feedback` : ''} · /asks` : undefined);
       if (options.presentation) {
+        if (!presentationAvailable(ctx)) {
+          const oldSource = source; source = undefined; oldSource?.dispose();
+          projectionError = 'This Pi host does not expose the UI capability required to present private questions.';
+          return;
+        }
         if (active(ctx, epoch)) {
           if (!source) {
             const mine = epoch;
@@ -267,6 +276,8 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       if (ctx.mode !== 'tui') return result({ status: 'unsupported_host', host: ctx.mode,
         reason: 'Native async asks require interactive Pi TUI; no question was saved.' });
       if (signal?.aborted) return result({ status: 'aborted', saved: false });
+      if (!presentationAvailable(ctx)) return result({ status: 'unsupported_host', host: ctx.mode, saved: false,
+        reason: 'This Pi host does not expose the private question presentation capability; no question was saved.' });
       if (!context) bind(ctx);
       if (!active(ctx, epoch)) return result({ status: 'session_changing', saved: false });
       if (!params.question.trim()) return result({ status: 'invalid_question', saved: false });
@@ -294,13 +305,13 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   });
 
 
-  function present(ctx: ExtensionContext, initialId?: string) {
+  function present(ctx: ExtensionContext, initialId?: string, focus = false) {
     if (ctx.mode !== 'tui' || !active(ctx, epoch) || open) return;
     if (!running && !ctx.isIdle()) { resumeAfterBoundary(ctx, epoch, true); return; }
     const state = project(ctx);
     if (!state.pending.length) return;
     if (options.presentation) {
-      ambient(ctx); try { source?.reveal(initialId); if (source) displayError = undefined; } catch (error) { presentationFailed(ctx, error, 'display'); }
+      ambient(ctx); try { source?.reveal(initialId, { focus }); if (source) displayError = undefined; } catch (error) { presentationFailed(ctx, error, 'display'); }
       return;
     }
     const mine = epoch;
@@ -396,18 +407,24 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
         ambient(ctx); ctx.ui.notify(plain(storageFailure()), 'error');
         if (!open && state.pending.length) {
           const id = args.trim() || undefined;
-          if (!id || state.pending.some((question) => question.id === id)) present(ctx, id);
+          if (!id || state.pending.some((question) => question.id === id)) present(ctx, id, true);
         }
         return;
       }
       if (open) { ctx.ui.notify('A private question is already open.', 'info'); return; }
       if (!state.pending.length) {
         ambient(ctx);
+        // The shared presenter may still own a blocking-only group. /asks is
+        // explicit focus intent even though that group has no native ask row.
+        if (options.presentation) {
+          try { if (source?.reveal(undefined, { focus: true })) { displayError = undefined; return; } }
+          catch (error) { presentationFailed(ctx, error, 'display'); return; }
+        }
         const waiting = [...state.answers.values()].filter((answer) => !state.received.has(answer.answerId));
         ctx.ui.notify(waiting.length
           ? `No pending private questions. ${waiting.length} saved feedback item(s) await an actual host receipt:\n` +
             waiting.map((answer) => `${plain(answer.prompt.question)}\n${plain(answer.answer.text)}\nAnswer: ${answer.answerId}`).join('\n\n') +
-            '\n\nDelivery may still be queued. If it was interrupted, quit Pi and resume this original session to recover with the same answer identities. Do not submit again; /reload is not a delivery retry.'
+            '\n\nDelivery may still be queued or consumed without a durable receipt. Preserve/copy retained drafts and the original SDK journal. Do not submit again or quit/resume as a feedback retry; /reload is not a delivery retry.'
           : 'No pending private questions.', 'info');
         return;
       }
@@ -415,7 +432,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       if (initialId && !state.pending.some((question) => question.id === initialId)) {
         ctx.ui.notify('That private question is not pending on this session branch.', 'warning'); return;
       }
-      present(ctx, initialId);
+      present(ctx, initialId, true);
     },
   });
 }

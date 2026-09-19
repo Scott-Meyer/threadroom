@@ -99,7 +99,10 @@ export default function(pi: any) {
       let widget: any, focus: any;
       const ordinary = { value: 'ORDINARY', getText() { return this.value; }, setText(value: string) { this.value = value; }, handleInput(data: string) { this.value += data; } };
       const noRawTui = { children: [ordinary], terminal: { rows: 24, columns: 80 }, requestRender() {}, getFocusedComponent() { return focus; }, setFocus(next: any) { focus = next; } }; focus = ordinary;
-      const noRaw = createQuestionHost({ ui: { setWidget(_key: string, factory: any) { if (factory) widget = factory(noRawTui, ctx.ui.theme); else widget?.dispose(); } } });
+      const noRaw = createQuestionHost({ ui: {
+        getCoreEditor() { return ordinary; },
+        setWidget(_key: string, factory: any) { if (factory) widget = factory(noRawTui, ctx.ui.theme); else widget?.dispose(); },
+      } });
       noRaw.enqueue({ id: 'NO_RAW', mode: 'async', questions: [question], commit() {} }); await Promise.resolve(); widget.render(80);
       widget.handleInput('\x1d'); assert.doesNotMatch(widget.render(80).join('\n'), /Collapsed/, 'collapse is unavailable without an editor-level reopen hook');
       widget.handleInput('visible'); assert.equal(noRaw.snapshot().current!.reply, 'visible', 'unsupported collapse cannot swallow input into a hidden draft');

@@ -5,10 +5,15 @@ export type NativeSavedAnswer = Readonly<{ sessionId: string; questionId: string
 export interface NativeQuestionSource {
   /** Authoritative pending projection. Removal is not a consumption receipt. */
   replace(questions: readonly NativeQuestion[]): void;
-  reveal(questionId?: string): void;
+  /** Select/display a pending question. Only an explicit person action grants
+   * focus intent; bind/navigation/recovery use passive reveal. */
+  reveal(questionId?: string, options?: Readonly<{ focus?: boolean }>): boolean | void;
   dispose(): void;
 }
 export interface NativeQuestionPresentation {
+  /** Optional pre-persistence admission for the presentation's public host
+   * capabilities. A false result means no new question may be saved. */
+  canPresent?(context: ExtensionContext): boolean;
   connect(binding: {
     context: ExtensionContext;
     sessionId: string;

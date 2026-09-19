@@ -4,11 +4,11 @@ Keep everyday questions in Pi, and bring a discussion to Threadroom when it shou
 
 ## Private questions
 
-Blocking questions take default priority and await only their own group. Nonblocking questions appear automatically while the AI continues working—not in a hidden inbox. Same-priority arrivals retain the current draft; suggestions stay visible during writing, and clearing the reply restores choice selection.
+Blocking questions take priority within the question pane and await only their own group. Nonblocking questions appear automatically while the AI continues working—not in a hidden inbox. On normal Pi, arrivals leave the current input focused: use Shift+Tab or `/asks` to enter the pane. Same-priority arrivals retain the current draft; suggestions stay visible during writing, and clearing the reply restores choice selection.
 
-Use the SDK select keys to choose/confirm, type or paste a free reply, and Tab/Shift+Tab to navigate question and group-review tabs. Blocking review supports partial submission, live checks, custom text and Alt+N notes; cancel affects only that group. Native async does not offer notes because its stored answer contract cannot retain them. Async previews are literal text; blocking previews support Markdown.
+Use the SDK select keys to choose/confirm, type or paste a free reply, and Tab to cycle forward through question and group-review tabs. Shift+Tab selects/unselects the question pane, preserving both drafts; a solid border means the pane owns focus, and a dotted border means it does not. Chat keeps native Tab completion; Shift+Tab changes SDK thinking normally once no questions remain. Blocking review supports partial submission, live checks, custom text and Alt+N notes; cancel affects only that group. Native async does not offer notes because its stored answer contract cannot retain them. Async previews are literal text; blocking previews support Markdown.
 
-Escape pauses async questions without declining them or discarding their drafts; `/asks [id]` reopens pending questions. Collapse returns focus to the ordinary editor while retaining question drafts, on hosts with the public terminal-input hook needed to reopen there. Foreign prompts keep focus. Configured external-editor actions edit the original field and restore the TUI afterward.
+Escape pauses async questions without declining them or discarding their drafts; `/asks [id]` selects pending questions, including a blocking-only pane. Collapse retains question drafts and returns to the exact input that lent focus, only while it remains mounted. The extension never guesses a replacement from editor methods, classes or text. Normal SDK dialog events suppress the toggle while another prompt is active; Shift+Tab remains a pending-question global shortcut and can conflict with unannounced custom UI navigation. A question-specific configured shortcut or `/asks` avoids that ambiguity. Hosts with optional public `ui.getCoreEditor()` identity also support automatic question focus and fresh core-editor return. Normal Pi needs no SDK patch. Configured external-editor actions edit the original field and restore the TUI afterward.
 
 Private prompts and answers remain in the original Pi session/branch, never Threadroom’s API or discoverable outline. Saved native feedback retains its original prompt and answer identity, then steers a busy agent at a legal boundary or wakes an idle one. A closed Pi cannot be woken by this extension, and copied/forked different-session histories do not inherit ownership. Native async requires interactive TUI. Blocking questions also support SDK RPC/ACP dialogs; unsupported hosts and aborts are not human declines.
 
@@ -22,13 +22,13 @@ Threadroom can bring someone a question, an experiment, or an interaction you de
 
 ## Try it
 
-Native async needs no API or website. Shared Threadroom tools need the independent API and website running. From this repository, load the extension explicitly:
+Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Shared Threadroom tools need the independent API and website running. From this repository, load the extension explicitly:
 
 ```sh
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 ```
 
-That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question` or `ask_user_question_async`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "extensions": [] }` can disable that inherited producer without changing global settings. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
+That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question` or `ask_user_question_async`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
 
 Installation does not start the service. The packed package contains this adapter and its owned question modules, not the website, database, or historical reference source.
 
@@ -64,6 +64,8 @@ Wait results carry the request snapshot that established the outcome, not the or
 ## Boundaries and next slice
 
 Threadroom owns saved conversations and presentation isolation. Authored scripts can propose drafts, but host controls own saving feedback. Pi owns session participation and model-message delivery. Neither side grants generated content filesystem, terminal, or model credentials.
+
+Private question state, results and persistence are separate from terminal focus. A future attached FlightDeck presenter can become the primary UI with terminal fallback; attachment selection and handoff are not implemented in this slice.
 
 The Node transport and participation modules under `src/` have no Pi or rendering imports. Another Node host can use them without implementing a Pi TUI. Constructing a `ThreadroomClient` allocates no agents or connections; its first request opens its own HTTP/HTTPS pool. REST deadlines include the response body; SSE stays open until its signal, stream failure, or client closure. Redirects are not followed and HTTPS retains ordinary certificate verification.
 

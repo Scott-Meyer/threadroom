@@ -46,6 +46,8 @@ def start(extra=[]):
     ready = sum(e['event'] == 'ready' for e in events())
     c = pexpect.spawn(pi, base + extra, cwd=root, env=env, encoding='utf-8', dimensions=(24, 80), timeout=12)
     c.logfile = open(dir / ('terminal-resume.txt' if extra else 'terminal.txt'), 'w')
+    with (dir / 'test-owned-processes.jsonl').open('a') as pids:
+        pids.write(json.dumps({'event': 'started', 'pid': c.pid, 'resumed': bool(extra)}) + '\n')
     end = time.time() + 15
     while sum(e['event'] == 'ready' for e in events()) <= ready:
         assert time.time() < end, 'Pi startup never reached session_start'
@@ -59,6 +61,8 @@ def stop():
     child.sendcontrol('c'); time.sleep(0.2); child.sendcontrol('c')
     try: child.expect(pexpect.EOF, timeout=4)
     except pexpect.TIMEOUT: child.terminate(force=True)
+    with (dir / 'test-owned-processes.jsonl').open('a') as pids:
+        pids.write(json.dumps({'event': 'stopped', 'pid': child.pid, 'alive': child.isalive()}) + '\n')
 
 
 child = start()
@@ -150,8 +154,7 @@ try:
     wait(lambda: any(e['event'] == 'idle_seed' for e in events()), 'idle follow-up creation failed')
     send('\r')  # visibly selected suggestion; no /asks or typed number required
     wait(lambda: sum(e['event'] == 'feedback_seen' for e in events()) > prior, 'idle saved answer did not wake AI')
-    send('/native-probe\r')
-    branch = [e for e in events() if e['event'] == 'probe'][-1]['branch']
+    branch = probe()['branch']
     idle_question = next(e for e in events() if e['event'] == 'idle_seed')['result']['details']['id']
     idle_answers = [e['data'] for e in branch if e.get('customType') == 'threadroom.native.answer.v1' and e['data']['questionId'] == idle_question]
     assert len(idle_answers) == 1 and idle_answers[0]['answer']['selection']['preview'] == 'A soft finish.', idle_answers

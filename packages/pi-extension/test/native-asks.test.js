@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { stripVTControlCharacters } from 'node:util';
@@ -107,7 +107,10 @@ test('loaded native boundary saves stable identities, leaves pending on Escape, 
   await f.open();
   assert.match(f.notices.at(-1)[0], /My ordinary free answer/);
   assert.ok(f.notices.at(-1)[0].includes(answer.answerId));
-  assert.match(f.notices.at(-1)[0], /quit Pi and resume this original session/);
+  assert.match(f.notices.at(-1)[0], /queued or consumed without a durable receipt/);
+  assert.match(f.notices.at(-1)[0], /Preserve\/copy retained drafts and the original SDK journal/);
+  assert.match(f.notices.at(-1)[0], /Do not submit again or quit\/resume as a feedback retry/);
+  assert.doesNotMatch(f.notices.at(-1)[0], /quit Pi and resume this original session/);
   assert.equal(f.deliveries.length, 1, 'viewing saved feedback does not speculate about lost queues');
   const delivery = f.deliveries[0].message;
   f.manager.appendCustomMessageEntry(delivery.customType, delivery.content, true, delivery.details);
@@ -429,11 +432,21 @@ test('installed Pi PTY: focus, streaming UI, wake, real saved receipt and resume
 }, async (t) => {
   for (const interruption of ['0', '1']) await t.test(interruption === '0' ? 'ordinary busy steering' : 'abort, idle reload, physical restart recovery', async (t) => {
     const directory = await mkdtemp(resolve(tmpdir(), 'threadroom-native-tui-'));
-    t.after(() => rm(directory, { recursive: true, force: true }));
+    let passed = false;
+    t.after(async () => {
+      if (passed) await rm(directory, { recursive: true, force: true });
+      else console.error(`Retained failed native PTY evidence: ${directory}`);
+    });
     const result = spawnSync(process.env.PYTHON || 'python3', [resolve(root, 'packages/pi-extension/test/native-tui-smoke.py'),
       root, directory, process.env.THREADROOM_PI_BIN || 'pi'], { encoding: 'utf8', timeout: 60000,
       env: { ...process.env, NATIVE_TEST_RELOAD_INTERRUPTION: interruption } });
-    assert.equal(result.status, 0, result.stderr || result.stdout || String(result.error));
+    await writeFile(resolve(directory, 'driver-result.json'), JSON.stringify({
+      interruption, sdk, cli: process.env.THREADROOM_PI_BIN || 'pi', launcherPid: result.pid,
+      status: result.status, signal: result.signal, error: result.error?.message,
+      stdout: result.stdout, stderr: result.stderr,
+    }, null, 2));
+    assert.equal(result.status, 0, `${result.stderr || result.stdout || String(result.error)}\nEvidence: ${directory}`);
     assert.match(result.stdout, /Native TUI: immediate return/);
+    passed = true;
   });
 });

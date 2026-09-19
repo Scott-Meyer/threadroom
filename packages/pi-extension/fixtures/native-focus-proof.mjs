@@ -3,12 +3,13 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { resolveSdkPeer } from './sdk-peer.mjs';
 const [root, sdk] = process.argv.slice(2);
 const host = (path) => import(pathToFileURL(resolve(sdk, path)).href);
 const { loadExtensions } = await host('dist/core/extensions/loader.js');
 const { SessionManager } = await host('dist/core/session-manager.js');
 const themes = await host('dist/modes/interactive/theme/theme.js'); themes.initTheme('dark', false);
-const { TuiMainScreen, Editor } = await host('node_modules/@earendil-works/pi-tui/dist/index.js');
+const { TuiMainScreen, Editor } = await import(resolveSdkPeer(sdk, '@earendil-works/pi-tui'));
 const terminal = { rows: 40, columns: 100, kittyProtocolActive: false,
   start(input) { this.input = input; }, stop() {}, async drainInput() {}, write() {}, moveBy() {}, hideCursor() {}, showCursor() {}, clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {} };
 const tui = new TuiMainScreen(terminal);

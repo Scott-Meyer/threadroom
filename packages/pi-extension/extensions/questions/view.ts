@@ -10,12 +10,14 @@ export type QuestionFrame = { header: string[]; lines: string[]; focus: [number,
  * Returns complete frame content/geometry; the host owns its bounded viewport. */
 export class QuestionView {
   focused = false;
-  /** The host exposes Chat only when it owns a complete global focus route to a
-   * mounted public editor. These flags affect presentation, never drafts. */
-  chatAvailable = false;
+  /** Focus hints exist only when the host owns the complete public route.
+   * These flags affect presentation, never drafts. */
   chatFocused = false;
+  inputIsCore = true;
+  /** Explicit selection can currently acquire pane focus; independent of return capability. */
+  entryAvailable = false;
   chatReturnKey: string | undefined;
-  chatCycleKeys: Readonly<{ next: string; previous: string }> | undefined;
+  focusToggleKey: string | undefined;
   private disposed = false;
   private drafts = new Map<string, DraftEditors>();
   private model: QuestionModel;
@@ -55,20 +57,20 @@ export class QuestionView {
     const label = (index: number) => {
       const tab = tabs[index], mode = tab.mode === 'blocking' ? 'Ask' : 'Async';
       const title = tab.review ? 'review' : tab.header ? truncateToWidth(readable(tab.header).replace(/\s+/gu, ' ').trim(), 24, '') : String(index + 1);
-      return `${!this.chatFocused && index === at ? '›' : ''}[${mode} ${title}]`;
+      return `${index === at ? '›' : ''}[${mode} ${title}]`;
     };
-    const anchor = this.chatAvailable ? `${this.chatFocused ? '›' : ''}Chat │ Questions ` : '';
-    const available = Math.max(0, width - visibleWidth(anchor));
     let left = at, right = at, questions = label(at);
     while (left > 0 || right < tabs.length - 1) {
       const nextLeft = left > 0 ? label(left - 1) + ' ' + questions : undefined;
-      if (nextLeft && visibleWidth(nextLeft) <= available) { questions = nextLeft; left--; continue; }
+      if (nextLeft && visibleWidth(nextLeft) <= width) { questions = nextLeft; left--; continue; }
       const nextRight = right < tabs.length - 1 ? questions + ' ' + label(right + 1) : undefined;
-      if (nextRight && visibleWidth(nextRight) <= available) { questions = nextRight; right++; continue; }
+      if (nextRight && visibleWidth(nextRight) <= width) { questions = nextRight; right++; continue; }
       break;
     }
-    // Chat is a stable home anchor rather than one more bracketed question.
-    return this.theme.fg('accent', truncateToWidth(anchor + truncateToWidth(questions, available, ''), width, ''));
+    return this.theme.fg('accent', truncateToWidth(questions, width, ''));
+  }
+  private keyLabel(key: string) {
+    return key.split('+').map((part) => ({ ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', meta: 'Meta', tab: 'Tab' })[part.toLowerCase()] || (part.length === 1 ? part.toUpperCase() : part)).join('+');
   }
   private caret(lines: string[], fallback: number): [number, number] {
     const row = lines.findIndex((line) => line.includes(CURSOR_MARKER));
@@ -79,13 +81,14 @@ export class QuestionView {
     if (!current) return { header: [], lines: [], focus: [0, 1], footer: '' };
     const wrap = (text: unknown) => new Text(readable(text), 0, 0).render(width);
     const header = [this.tabs(width, current)];
-    const allAreas = this.chatCycleKeys ? ` · ${this.chatCycleKeys.next}/${this.chatCycleKeys.previous} moves focus` : '';
-    const questionNavigation = `Tab/Shift+Tab question tabs${allAreas}`;
-    const questionFooter = `${current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? 'Alt+N notes · ' : ''}${questionNavigation} · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel'}`;
-    const chatFooter = `Chat editor · Tab completion · Shift+Tab thinking${allAreas}${this.chatReturnKey ? ` · ${this.chatReturnKey} returns to questions` : ''}`;
-    const footer = this.theme.fg('dim', truncateToWidth(this.chatFocused ? chatFooter : questionFooter, width, ''));
+    const toggle = this.focusToggleKey && this.keyLabel(this.focusToggleKey);
+    const collapse = this.chatReturnKey && this.keyLabel(this.chatReturnKey);
+    const questionNavigation = `Tab next question${toggle ? ` · ${toggle} ${this.inputIsCore ? 'Chat' : 'previous input'}` : ''}`;
+    const questionFooter = `${current.tab.mode === 'blocking' && current.question?.allowNotes !== false ? 'Alt+N notes · ' : ''}${questionNavigation}${collapse ? ` · ${collapse} collapse` : ''} · PgUp/Dn details · Enter confirm · Esc ${current.tab.mode === 'async' ? 'pause' : 'cancel'}`;
+    const chatFooter = `${this.inputIsCore && this.chatFocused ? 'Chat editor · Tab completion' : 'Input outside questions'}${this.entryAvailable ? toggle ? ` · ${toggle} questions` : ' · /asks selects questions' : ' · Question focus unavailable'}${collapse ? ` · ${collapse} returns to questions` : ''}`;
+    const footer = this.theme.fg('dim', truncateToWidth(this.focused ? questionFooter : chatFooter, width, ''));
     if (current.error || current.saving) header.push(this.theme.fg('warning', truncateToWidth(current.saving ? 'Saving answer…' : current.errorCode === 'storage_unconfirmed' ? 'Storage unconfirmed · PgDn details' : 'Save failed · draft retained · PgDn details', width, '')));
-    if (current.paused) return { header, lines: wrap('Paused; this question remains pending. /asks resumes it.'), focus: [0, 1], footer };
+    if (current.paused) return { header, lines: wrap(`Paused; this question remains pending.${this.entryAvailable ? ' /asks resumes it.' : ' Draft retained.'}`), focus: [0, 1], footer };
     if (current.tab.review) {
       const answers = this.model.answers(current.tab.groupId);
       const summary = wrap(`Review this group\n${answers.map((answer) => `${answer.questionIndex + 1}. ${answer.question}: ${[answer.selected?.join(', '), answer.answer].filter(Boolean).join('; ')}${answer.notes ? `\nNotes: ${answer.notes}` : ''}`).join('\n')}\n${answers.length < this.model.tabs().filter((tab) => tab.groupId === current.tab.groupId && !tab.review).length ? 'Some questions are unanswered; partial submission is allowed.' : 'Ready to submit.'}`);
@@ -132,8 +135,9 @@ export class QuestionView {
   handleInput(data: string) {
     const current = this.model.current(); if (this.disposed || !current || isKeyRelease(data)) return;
     const kb = getKeybindings();
-    if (isKeyRepeat(data) && (matchesKey(data, 'tab') || matchesKey(data, 'shift+tab') || kb.matches(data, 'tui.select.cancel') || kb.matches(data, 'tui.select.confirm') || kb.matches(data, 'tui.input.submit'))) return;
-    if (matchesKey(data, 'tab') || matchesKey(data, 'shift+tab')) { this.model.navigate(matchesKey(data, 'tab') ? 1 : -1); return; }
+    if (isKeyRepeat(data) && (kb.matches(data, 'tui.select.cancel') || kb.matches(data, 'tui.select.confirm') || kb.matches(data, 'tui.input.submit'))) return;
+    if (matchesKey(data, 'tab')) { this.model.navigate(1); return; }
+    if (matchesKey(data, 'shift+tab')) return;
     if (current.paused || current.saving) return;
     if (current.tab.review) {
       if (kb.matches(data, 'tui.select.up') || kb.matches(data, 'tui.select.down')) this.model.moveReview();
