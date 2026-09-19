@@ -526,7 +526,8 @@ export default function(pi: any) {
       const answeredBlock = opaque.enqueue({ id: 'STOCK_ANSWERED', mode: 'blocking', questions: [question('stock-answered')] });
       await Promise.resolve(); opaqueSend('yes'); opaqueSend('\r');
       assert.deepEqual((await answeredBlock.outcome!).answers.map((answer) => answer.answer), ['yes']);
-      assert.equal(opaqueFocus, opaqueEditor, 'answering the blocker also restores the claimed input');
+      assert.equal(opaqueFocus, opaqueWidget, 'answering the blocker keeps the shared surface on a remaining async question');
+      assert.equal(opaque.snapshot().current!.tab.groupId, 'OPAQUE');
       opaque.suspend(true); assert.equal(opaqueFocus, opaqueEditor);
       assert.doesNotMatch(opaqueWidget.render(120).join('\n'), /Shift\+Tab|Ctrl\+\]|\/asks selects questions|Tab next question|Enter confirm/, 'known prompt span cannot advertise suppressed question entry');
       assert.equal(opaqueSend('\x1b[Z'), undefined, 'known SDK prompt span keeps its own ShiftTab');

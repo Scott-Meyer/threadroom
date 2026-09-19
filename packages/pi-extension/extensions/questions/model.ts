@@ -18,6 +18,7 @@ export class QuestionModel {
   private activeKey?: string;
   private disposed = false;
   private serial = 0;
+  private blockingCompletion?: 'answered' | 'cancelled' | 'detached';
   private changed: () => void;
   constructor(changed: () => void = () => {}) { this.changed = changed; }
   tabs(): readonly QuestionTab[] {
@@ -46,7 +47,7 @@ export class QuestionModel {
     if (!previous || (input.mode === 'blocking' && previous.mode === 'async')) this.activeKey = this.tabs()[0]?.key;
     else this.activeKey = previous.key;
     this.changed();
-    return { outcome, detach: () => { if (this.groups.get(input.id) !== group) return; this.remove(group); group.reject?.(detached()); } };
+    return { outcome, detach: () => { if (this.groups.get(input.id) !== group) return; this.remove(group, 'detached'); group.reject?.(detached()); } };
   }
   select(groupId: string, questionId?: string) {
     const target = this.tabs().find((tab) => tab.key === key(groupId, questionId));
@@ -61,6 +62,10 @@ export class QuestionModel {
   /** Tabs whose groups have not been paused, without changing selection. */
   unpausedTabs(): readonly QuestionTab[] {
     return Object.freeze(this.tabs().filter((tab) => !this.groups.get(tab.groupId)?.paused));
+  }
+  /** The last required-group completion since the host last crossed out of modal state. */
+  takeBlockingCompletion() {
+    const completion = this.blockingCompletion; this.blockingCompletion = undefined; return completion;
   }
   private cell(): Cell | undefined {
     const current = this.current();
@@ -131,14 +136,19 @@ export class QuestionModel {
   moveReview() { const current = this.current(); if (!current?.tab.review) return; const group = this.groups.get(current.tab.groupId)!; group.reviewChoice = group.reviewChoice ? 0 : 1; this.changed(); }
   submit(groupId: string) {
     const group = this.groups.get(groupId); if (!group || group.spec.mode !== 'blocking') return;
-    const result = Object.freeze({ answers: this.answers(groupId), cancelled: false }); this.remove(group); group.resolve!(result);
+    const result = Object.freeze({ answers: this.answers(groupId), cancelled: false }); this.remove(group, 'answered'); group.resolve!(result);
   }
   cancel() {
     const current = this.current(); if (!current) return;
     const group = this.groups.get(current.tab.groupId)!;
     if (group.spec.mode === 'async') { group.paused = true; this.changed(); return; }
-    const result = Object.freeze({ answers: this.answers(group.spec.id), cancelled: true }); this.remove(group); group.resolve!(result);
+    const result = Object.freeze({ answers: this.answers(group.spec.id), cancelled: true }); this.remove(group, 'cancelled'); group.resolve!(result);
   }
-  private remove(group: Group) { this.groups.delete(group.spec.id); if (!this.tabs().some((tab) => tab.key === this.activeKey)) this.activeKey = this.tabs()[0]?.key; this.changed(); }
-  dispose() { if (this.disposed) return; this.disposed = true; for (const group of [...this.groups.values()]) { this.remove(group); group.reject?.(detached()); } }
+  private remove(group: Group, completion?: 'answered' | 'cancelled' | 'detached') {
+    this.groups.delete(group.spec.id);
+    if (group.spec.mode === 'blocking' && completion) this.blockingCompletion = completion;
+    if (!this.tabs().some((tab) => tab.key === this.activeKey)) this.activeKey = this.tabs()[0]?.key;
+    this.changed();
+  }
+  dispose() { if (this.disposed) return; this.disposed = true; for (const group of [...this.groups.values()]) { this.remove(group, 'detached'); group.reject?.(detached()); } }
 }

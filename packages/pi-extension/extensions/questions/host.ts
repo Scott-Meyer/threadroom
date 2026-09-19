@@ -96,9 +96,21 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
     const target = mountedInput(settledModalOrigin);
     tui.setFocus(target || null); if (data !== undefined) target?.handleInput(data); return true;
   }
-  function availablePaneTab(preferred?: string) {
-    const available = model.unpausedTabs().filter((tab) => !collapsed.has(tabKey(tab)));
-    return available.find((tab) => tabKey(tab) === preferred) || available[0];
+  function availablePaneTab(preferred?: string, includePaused = false) {
+    const available = (includePaused ? model.tabs() : model.unpausedTabs()).filter((tab) => tab.mode === 'async');
+    const visible = available.filter((tab) => !collapsed.has(tabKey(tab)));
+    return visible.find((tab) => tabKey(tab) === preferred) || visible[0]
+      || available.find((tab) => tabKey(tab) === preferred) || available[0];
+  }
+  function continueInQuestions(tab: { key: string; groupId: string; questionId?: string; incarnation: number }) {
+    const loan = modalClaimedInput ? modalOrigin : explicitQuestionOrigin || returnInput();
+    modal = modalClaimedInput = modalPendingClaim = false; modalOrigin = undefined; modalPaneTab = undefined;
+    deferredModalReturn = undefined; settledModalOrigin = undefined;
+    explicitQuestionLoan = true; explicitQuestionOrigin = loan;
+    chat = false; chatFrom = undefined; collapsed.delete(tabKey(tab));
+    // Selecting also resumes a paused async group; successful required
+    // completion deliberately hands the still-owned pane to that question.
+    model.select(tab.groupId, tab.questionId);
   }
   function focusQuestion(explicit = false) {
     const target = model.current()?.tab;
@@ -175,15 +187,17 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
       modalPendingClaim = initialFocus !== component;
       modalClaimedInput = false;
       modalOrigin = modalPendingClaim ? undefined : returnInput();
-      if (modalPendingClaim) modalPaneTab = undefined;
     } else if (!blocking && modal) {
       const paneOwned = !modalClaimedInput && !modalPendingClaim, paneTab = modalPaneTab;
-      const restored = finishModal(true);
-      chat = false; chatFrom = undefined;
-      if (restored) return;
-      if (paneOwned) {
-        const available = availablePaneTab(paneTab);
-        if (available && tabKey(current.tab) !== tabKey(available)) {
+      const completion = model.takeBlockingCompletion(), answered = completion === 'answered';
+      const available = availablePaneTab(paneTab, answered);
+      if (answered && available) {
+        continueInQuestions(available); current = model.current()!;
+      } else {
+        const restored = finishModal(true);
+        chat = false; chatFrom = undefined;
+        if (restored) return;
+        if (paneOwned && available && tabKey(current.tab) !== tabKey(available)) {
           model.select(available.groupId, available.questionId); current = model.current()!;
         }
       }
@@ -228,6 +242,7 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
     queueMicrotask(() => {
       scheduled = false; if (disposed) return;
       if (!model.tabs().length && mounted) {
+        model.takeBlockingCompletion();
         explicitQuestionLoan = false; explicitQuestionOrigin = undefined;
         if (!finishModal(true) && !unwindDeferredModalReturn() && !unwindSettledModalReturn()) release();
         context.ui.setWidget(widgetKey, undefined);
@@ -361,7 +376,7 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
   return {
     enqueue(group: QuestionGroup) {
       ensure();
-      if (group.mode === 'blocking' && !hasBlocker() && tui?.getFocusedComponent() === component) modalPaneTab = displayKey();
+      if (group.mode === 'blocking' && !hasBlocker()) modalPaneTab = displayKey();
       return model.enqueue(group);
     },
     select(groupId: string, questionId?: string) { ensure(); const tab = model.tabs().find((tab) => tab.groupId === groupId && tab.questionId === questionId); if (tab) collapsed.delete(JSON.stringify([tab.key, tab.incarnation])); chat = false; chatFrom = undefined; model.select(groupId, questionId); reconcile(); },

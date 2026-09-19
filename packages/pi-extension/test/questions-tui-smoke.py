@@ -109,6 +109,7 @@ try:
     result = next(e['result'] for e in events() if e['event'] == 'tool_end' and e['name'] == 'ask_user_question')
     assert len(result['details']['answers']) == 1
     answer = result['details']['answers'][0]; assert answer['questionIndex'] == 1 and answer['selected'] == ['North', 'South'] and answer['notes'] == 'OPEN_NOTE'
+    frame = observe(); assert not frame['editorLike'] and current(frame)['tab']['mode'] == 'async', 'answering the required group returned to Chat before remaining async work'
     wait(lambda: any(e['event'] == 'settled' for e in events()), 'actual provider did not settle')
     send('\x1b'); send('\x15/reload\r')
     old_nonce = frame['nonce']; wait(lambda: any(e['event'] == 'ready' and e['nonce'] != old_nonce for e in events()), 'real reload did not produce fresh activation')
