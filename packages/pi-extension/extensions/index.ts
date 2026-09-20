@@ -46,10 +46,6 @@ export default function threadroom(pi: ExtensionAPI) {
     writeThreadroomConfig({ path, shared: setting === 'inherit' ? undefined : setting === 'on' });
     ctx.ui.notify(`Saved ${scope === 'project' ? 'project override' : 'computer-wide default'} in ${path}. Run /reload to apply it.`, 'info');
   }
-  pi.registerCommand('threadroom-config', {
-    description: 'Configure optional shared Threadroom tools for this computer or project.',
-    handler: configureShared,
-  });
   const askToolName = 'threadroom_ask';
   pi.registerMessageRenderer(ACTIVITY, renderFeedback);
   let room: Participation | undefined;
@@ -140,7 +136,7 @@ export default function threadroom(pi: ExtensionAPI) {
     room.acknowledge(receipts(ctx.sessionManager.getBranch()));
   }
   async function use(ctx: any) {
-    if (!sharedEnabled) throw Object.assign(new Error('Shared Threadroom is disabled. Use /threadroom-config, then /reload, to enable it for this computer or project.'), { code: 'threadroom_disabled' });
+    if (!sharedEnabled) throw Object.assign(new Error('Shared Threadroom is disabled. Use /threadroom, then /reload, to enable it for this computer or project.'), { code: 'threadroom_disabled' });
     if (!room) await bind(ctx);
     if (!room) throw new Error('Threadroom session is changing; retry in the active session.');
     confirmPersisted(ctx);
@@ -259,9 +255,26 @@ export default function threadroom(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand('threadroom', { description: 'Configure Threadroom, or show connectivity and watched discussions when enabled.',
+  pi.registerCommand('threadroom', { description: 'Configure Threadroom or inspect its connectivity and watched discussions.',
     async handler(args, ctx) {
-      if (!sharedEnabled) { await configureShared(args, ctx); return; }
+      const words = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
+      if (['computer', 'global', 'project', 'local'].includes(words[0])) { await configureShared(args, ctx); return; }
+      let action = words[0];
+      if (!action) {
+        const trusted = typeof ctx.isProjectTrusted === 'function' && ctx.isProjectTrusted() === true;
+        const choice = await ctx.ui.select(`Threadroom (${sharedEnabled ? 'on' : 'off'})`, [
+          ...(sharedEnabled ? ['Show status and watched discussions'] : []),
+          'Configure computer-wide default', ...(trusted ? ['Configure this project'] : []),
+        ]);
+        if (choice === 'Configure computer-wide default') { await configureShared('computer', ctx); return; }
+        if (choice === 'Configure this project') { await configureShared('project', ctx); return; }
+        if (choice === 'Show status and watched discussions') action = 'status'; else return;
+      }
+      if (action !== 'status') {
+        ctx.ui.notify('Usage: /threadroom, /threadroom status, or /threadroom <computer|project> <on|off|inherit>.', 'warning');
+        return;
+      }
+      if (!sharedEnabled) { ctx.ui.notify('Shared Threadroom is off. Run /threadroom to configure it.', 'info'); return; }
       ensureSharedRuntime(); await managedService?.ensure(); const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info');
     } });
 }

@@ -9,6 +9,7 @@ const { loadExtensions } = await host('dist/core/extensions/loader.js');
 const loaded = await loadExtensions([resolve(root, 'packages/pi-extension/fixtures/main-wiring-proof.ts')], root);
 assert.deepEqual(loaded.errors, []);
 const extension = loaded.extensions[0], names = globalThis[Symbol.for('threadroom.test.main-registration')];
+assert.equal(extension.commands.has('threadroom-config'), false, 'Threadroom configuration belongs to the /threadroom menu');
 for (const name of ['ask_user_question', 'ask_user_question_async', 'threadroom_ask', 'threadroom']) {
   assert.equal(names.filter((registered) => registered === name).length, 1, `Real MAIN must register ${name} exactly once`);
   assert.ok(extension.tools.has(name));
@@ -51,14 +52,14 @@ loaded.runtime.getActiveTools = () => [...activeTools]; loaded.runtime.setActive
 for (const handler of extension.handlers.get('session_start') || []) await handler({}, stock);
 assert.deepEqual(activeTools.sort(), ['ask_user_question', 'ask_user_question_async'], 'shared tools are inactive by default');
 const configPath = resolve(process.env.PI_CODING_AGENT_DIR, 'threadroom.json');
-await extension.commands.get('threadroom-config').handler('project on', stock);
+await extension.commands.get('threadroom').handler('project on', stock);
 assert.match(notices.at(-1), /trusted project/, 'older contexts cannot grant project overrides');
-selections.push('Computer-wide default', 'On');
+selections.push('Configure computer-wide default', 'On');
 await extension.commands.get('threadroom').handler('', stock);
-assert.deepEqual(selectionPrompts.map(({ title }) => title), ['Configure shared Threadroom', 'Computer-wide shared Threadroom'],
+assert.deepEqual(selectionPrompts.map(({ title }) => title), ['Threadroom (off)', 'Computer-wide shared Threadroom'],
   'disabled /threadroom opens the extension configuration menu');
 assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), { shared: true }, 'the /threadroom menu writes the computer-wide setting');
-await extension.commands.get('threadroom-config').handler('computer inherit', stock);
+await extension.commands.get('threadroom').handler('computer inherit', stock);
 assert.equal(existsSync(configPath), false, 'extension command can restore the built-in default'); notices = [];
 const abort = new AbortController();
 const blocker = extension.tools.get('ask_user_question').definition.execute('stock-blocking-only', { questions: [{ question: 'TEST stock blocker?', options: [{ label: 'One' }, { label: 'Two' }] }] }, abort.signal, () => {}, stock);

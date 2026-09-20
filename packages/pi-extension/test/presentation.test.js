@@ -218,7 +218,7 @@ test('Pi distinguishes waited snapshots, saved replies, outline limits and uncer
   assert.match(error, /not confirmed/);
   assert.ok(error.includes(`API: ${f.url}`));
   assert.ok(error.includes(`Website: ${f.url}`));
-  await f.extension.commands.get('threadroom').handler('', f.ctx);
+  await f.extension.commands.get('threadroom').handler('status', f.ctx);
   assert.ok(f.notices.at(-1).includes(`API: ${f.url}`));
   assert.ok(f.notices.at(-1).includes(`Website: ${f.url}`));
   assert.match(f.notices.at(-1), /Watching:/);

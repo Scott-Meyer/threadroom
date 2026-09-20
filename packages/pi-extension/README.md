@@ -24,15 +24,16 @@ The SDK can mutate memory before a failed disk write. Native records then remain
 
 Threadroom can bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
-The shared lane is **off by default**; private questions remain available. While it is off, `/threadroom` opens the extension’s configuration picker; `/threadroom-config` is the explicit equivalent. It can save a computer-wide default or, in a trusted project, an overriding project value. Command arguments are also accepted:
+The shared lane is **off by default**; private questions remain available. `/threadroom` opens the extension’s menu for status, watched discussions, and configuration. It can save a computer-wide default or, in a trusted project, an overriding project value. Direct command arguments are also accepted:
 
 ```text
-/threadroom-config computer on
-/threadroom-config computer off
-/threadroom-config computer inherit
-/threadroom-config project on
-/threadroom-config project off
-/threadroom-config project inherit
+/threadroom computer on
+/threadroom computer off
+/threadroom computer inherit
+/threadroom project on
+/threadroom project off
+/threadroom project inherit
+/threadroom status
 ```
 
 The durable files are `~/.pi/agent/threadroom.json` (or Pi’s configured agent directory) and `<project>/.pi/threadroom.json`. Project configuration is not read before Pi trusts that project. Missing settings inherit downward from the built-in off default. A malformed effective setting fails the shared lane closed without disabling private questions; an explicit valid trusted-project value can still override a malformed computer default, which remains visible as a warning. Run `/reload` after changing the setting. When off, shared tools are absent from the model’s active tool set, configured shared endpoints are not parsed or contacted, restored shared watches do not connect, and no managed service starts.
@@ -49,7 +50,7 @@ That isolates the trial from existing extensions. For normal project loading, fi
 
 The packed adapter includes the local service runtime. After the shared lane is enabled, the first shared Threadroom request—or restoration of active shared watches—reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
 
-After shared Threadroom is enabled through `/threadroom` or `/threadroom-config`, runtime/service configuration uses environment variables:
+After shared Threadroom is enabled through `/threadroom`, runtime/service configuration uses environment variables:
 
 - `THREADROOM_API_URL`: an explicitly owned API endpoint. Setting it disables automatic local startup, even when it names localhost. Set the literal default URL too when intentionally using a checkout/supervised service with its own database.
 - `THREADROOM_UI_URL`: website address; defaults to the API address. Set it separately for an independently hosted website.
