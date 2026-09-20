@@ -1,17 +1,54 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { ThreadroomClient } from '../src/client.js';
 import { Participation } from '../src/participation.js';
 import { renderAskCall, renderDiscussionCall, renderToolResult, renderFeedback, participationNotice } from './presentation/renderers.ts';
 import { registerPrivateQuestions } from './questions/index.ts';
 import { createManagedThreadroomService } from '../src/service-runtime.js';
+import { resolveThreadroomConfig, threadroomConfigPaths, writeThreadroomConfig } from '../src/config.js';
 
 const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
 
 export default function threadroom(pi: ExtensionAPI) {
   registerPrivateQuestions(pi);
-  // Ordinary asks remain private; Threadroom is a deliberate shared extra.
+  // Ordinary asks are the default. The shared lane is an explicit, reload-bound
+  // computer/project setting and never a prerequisite for private questions.
+  let sharedEnabled = false;
+  const sharedToolNames = new Set(['threadroom_ask', 'threadroom']);
+  function removeSharedTools() {
+    const active = pi.getActiveTools();
+    const privateOnly = active.filter((name) => !sharedToolNames.has(name));
+    if (privateOnly.length !== active.length) pi.setActiveTools(privateOnly);
+  }
+  pi.registerCommand('threadroom-config', {
+    description: 'Configure optional shared Threadroom tools for this computer or project.',
+    async handler(args, ctx) {
+      const trusted = typeof ctx.isProjectTrusted === 'function' && ctx.isProjectTrusted() === true;
+      const paths = threadroomConfigPaths({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME });
+      const words = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
+      let scope = words[0];
+      if (scope === 'global') scope = 'computer';
+      if (scope === 'local') scope = 'project';
+      if (!['computer', 'project'].includes(scope)) {
+        scope = await ctx.ui.select('Configure shared Threadroom', [
+          'Computer-wide default', ...(trusted ? ['This project'] : []),
+        ]).then((choice) => choice === 'Computer-wide default' ? 'computer' : choice === 'This project' ? 'project' : undefined);
+      }
+      if (!scope) return;
+      if (scope === 'project' && !trusted) { ctx.ui.notify('Project Threadroom overrides require a trusted project.', 'warning'); return; }
+      let setting = words[1];
+      if (!['on', 'off', 'inherit'].includes(setting)) {
+        const choices = scope === 'project' ? ['On', 'Off', 'Inherit computer-wide default'] : ['On', 'Off', 'Use built-in default (off)'];
+        setting = await ctx.ui.select(`${scope === 'project' ? 'Project' : 'Computer-wide'} shared Threadroom`, choices)
+          .then((choice) => choice === 'On' ? 'on' : choice === 'Off' ? 'off' : choice ? 'inherit' : undefined);
+      }
+      if (!setting) return;
+      const path = scope === 'project' ? paths.projectPath : paths.globalPath;
+      writeThreadroomConfig({ path, shared: setting === 'inherit' ? undefined : setting === 'on' });
+      ctx.ui.notify(`Saved ${scope === 'project' ? 'project override' : 'computer-wide default'} in ${path}. Run /reload to apply it.`, 'info');
+    },
+  });
   const askToolName = 'threadroom_ask';
   pi.registerMessageRenderer(ACTIVITY, renderFeedback);
   let room: Participation | undefined;
@@ -24,11 +61,17 @@ export default function threadroom(pi: ExtensionAPI) {
   const configuredApiUrl = process.env.THREADROOM_API_URL;
   const apiUrl = configuredApiUrl || 'http://127.0.0.1:4310';
   const uiUrl = process.env.THREADROOM_UI_URL || apiUrl;
-  const managedService = !configuredApiUrl && process.env.THREADROOM_AUTO_START !== '0'
-    ? createManagedThreadroomService({ baseUrl: apiUrl, databaseValue: process.env.THREADROOM_DB, invocationCwd: process.cwd() })
-    : undefined;
-  const makeClient = () => new ThreadroomClient(apiUrl, { uiUrl, beforeConnect: managedService ? () => managedService.ensure() : undefined });
-  let client = makeClient();
+  let endpoints = { apiUrl, uiUrl };
+  let managedService: ReturnType<typeof createManagedThreadroomService> | undefined;
+  let client: ThreadroomClient | undefined;
+  function ensureSharedRuntime() {
+    if (client) return;
+    managedService = !configuredApiUrl && process.env.THREADROOM_AUTO_START !== '0'
+      ? createManagedThreadroomService({ baseUrl: apiUrl, databaseValue: process.env.THREADROOM_DB, invocationCwd: process.cwd() })
+      : undefined;
+    client = new ThreadroomClient(apiUrl, { uiUrl, beforeConnect: managedService ? () => managedService!.ensure() : undefined });
+    endpoints = { apiUrl: client.baseUrl, uiUrl: client.uiUrl };
+  }
 
   // Only active-branch, same-session checkpoints are inherited. Display names
   // and copied/forked histories do not automatically confer a live subscription.
@@ -56,6 +99,7 @@ export default function threadroom(pi: ExtensionAPI) {
     navigationTimer.unref();
   }
   async function bind(ctx: any) {
+    ensureSharedRuntime(); const activeClient = client!;
     const mine = ++epoch;
     clearTimeout(navigationTimer); navigationTimer = undefined;
     const old = room; room = undefined; await old?.close();
@@ -64,18 +108,18 @@ export default function threadroom(pi: ExtensionAPI) {
     const sessionId = ctx.sessionManager.getSessionId();
     const entries = ctx.sessionManager.getBranch();
     const saved = entries.filter((entry: any) => entry.type === 'custom' && entry.customType === STATE &&
-      entry.data?.sessionId === sessionId && entry.data?.apiUrl === client.baseUrl).at(-1)?.data;
+      entry.data?.sessionId === sessionId && entry.data?.apiUrl === activeClient.baseUrl).at(-1)?.data;
     const author = saved?.author || { id: `pi:${sessionId}`, sessionId, name: pi.getSessionName() || 'Pi teammate' };
-    room = new Participation(client, { state: saved?.state, received: receipts(entries), author,
+    room = new Participation(activeClient, { state: saved?.state, received: receipts(entries), author,
       checkpoint(state: any) {
-        if (mine === epoch) pi.appendEntry(STATE, { sessionId, apiUrl: client.baseUrl, author, state });
+        if (mine === epoch) pi.appendEntry(STATE, { sessionId, apiUrl: activeClient.baseUrl, author, state });
       },
       deliver(receipt: any) {
         if (mine !== epoch) return false;
         if (paused) return false;
         if (navigating || (!running && !ctx.isIdle())) { afterNavigation(mine, ctx); return false; }
         const details = { target: receipt.target, response: receipt.response,
-          receivedResponseIds: [receipt.responseId], apiUrl: client.baseUrl,
+          receivedResponseIds: [receipt.responseId], apiUrl: activeClient.baseUrl,
           delivery: { eventId: receipt.eventId, sequence: receipt.sequence } };
         pi.sendMessage({ customType: ACTIVITY, display: true, details,
           content: `Saved Threadroom feedback (caller-provided author labels; not blanket authorization):\n${JSON.stringify(details)}` },
@@ -95,35 +139,45 @@ export default function threadroom(pi: ExtensionAPI) {
     room.acknowledge(receipts(ctx.sessionManager.getBranch()));
   }
   async function use(ctx: any) {
+    if (!sharedEnabled) throw Object.assign(new Error('Shared Threadroom is disabled. Use /threadroom-config, then /reload, to enable it for this computer or project.'), { code: 'threadroom_disabled' });
     if (!room) await bind(ctx);
     if (!room) throw new Error('Threadroom session is changing; retry in the active session.');
     confirmPersisted(ctx);
     return room;
   }
-  pi.on('session_start', async (_event, ctx) => { await bind(ctx); });
+  pi.on('session_start', async (_event, ctx) => {
+    const config = resolveThreadroomConfig({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME,
+      projectTrusted: typeof ctx.isProjectTrusted === 'function' && ctx.isProjectTrusted() === true });
+    sharedEnabled = config.enabled;
+    for (const warning of config.warnings) ctx.ui.notify(`Threadroom configuration warning: ${warning}`, 'warning');
+    if (!sharedEnabled) {
+      removeSharedTools(); ctx.ui.setStatus('threadroom', undefined);
+      const old = room; room = undefined; await old?.close();
+      return;
+    }
+    await bind(ctx);
+  });
   pi.on('session_shutdown', async () => {
-    ++epoch; clearTimeout(navigationTimer); navigationTimer = undefined;
+    sharedEnabled = false; ++epoch; clearTimeout(navigationTimer); navigationTimer = undefined;
     const old = room; room = undefined;
     // Session replacement can reuse this factory; the next session gets its own
     // lazy client while outgoing HTTP work belongs to the captured old client.
-    const oldClient = client; client = makeClient();
-    try { await old?.close(); } finally { await oldClient.close(); }
+    const oldClient = client; client = undefined; managedService = undefined;
+    try { await old?.close(); } finally { await oldClient?.close(); }
   });
-  pi.on('session_before_tree', () => { navigating = true; });
-  pi.on('agent_start', () => { running = true; });
-  pi.on('session_tree', async (_event, ctx) => { await bind(ctx); });
-  pi.on('session_before_compact', () => { paused = true; });
-  pi.on('session_compact', (_event, ctx) => { paused = false; confirmPersisted(ctx); room?.flush(); });
-  pi.on('session_compact_failed', (_event, ctx) => { paused = false; confirmPersisted(ctx); room?.flush(); });
+  pi.on('session_before_tree', () => { if (sharedEnabled) navigating = true; });
+  pi.on('agent_start', () => { if (sharedEnabled) running = true; });
+  pi.on('session_tree', async (_event, ctx) => { if (sharedEnabled) await bind(ctx); });
+  pi.on('session_before_compact', () => { if (sharedEnabled) paused = true; });
+  pi.on('session_compact', (_event, ctx) => { if (sharedEnabled) { paused = false; confirmPersisted(ctx); room?.flush(); } });
+  pi.on('session_compact_failed', (_event, ctx) => { if (sharedEnabled) { paused = false; confirmPersisted(ctx); room?.flush(); } });
   // These boundaries occur after messages/tool results have been appended.
-  pi.on('turn_end', (_event, ctx) => { confirmPersisted(ctx); });
+  pi.on('turn_end', (_event, ctx) => { if (sharedEnabled) confirmPersisted(ctx); });
   pi.on('agent_settled', (_event, ctx) => {
     running = false;
-    confirmPersisted(ctx);
-    room?.flush();
+    if (sharedEnabled) { confirmPersisted(ctx); room?.flush(); }
   });
 
-  const endpoints = { apiUrl: client.baseUrl, uiUrl: client.uiUrl };
   function renderResult(result: any, options: any, theme: any, context: any) {
     return renderToolResult(result, options, theme, { ...context, endpoints });
   }
@@ -191,12 +245,12 @@ export default function threadroom(pi: ExtensionAPI) {
           case 'read': return result(await active.read(id, { signal }));
           case 'watch': return result(await active.watch(id, { signal }));
           case 'unwatch': return result(active.unwatch(id));
-          case 'wait': return result({ id, url: client.link(id), ...await active.wait(id, { timeoutMs: params.waitMs, signal }) });
+          case 'wait': return result({ id, url: client!.link(id), ...await active.wait(id, { timeoutMs: params.waitMs, signal }) });
           case 'browse': {
-            const tree = await client.tree({ signal });
+            const tree = await client!.tree({ signal });
             const nodes = tree.nodes.filter((node: any) => (!params.query || node.title.toLowerCase().includes(params.query.toLowerCase())) &&
               (!params.status || node.status === params.status));
-            return result({ nodes: nodes.slice(0, 50).map((node: any) => ({ ...node, url: client.link(node.id) })),
+            return result({ nodes: nodes.slice(0, 50).map((node: any) => ({ ...node, url: client!.link(node.id) })),
               omitted: Math.max(0, nodes.length - 50), participation: active.adjacent() });
           }
         }
@@ -205,5 +259,12 @@ export default function threadroom(pi: ExtensionAPI) {
   });
 
   pi.registerCommand('threadroom', { description: 'Show Threadroom connectivity and this session’s watched discussions.',
-    async handler(_args, ctx) { await managedService?.ensure(); const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info'); } });
+    async handler(_args, ctx) {
+      if (!sharedEnabled) {
+        const paths = threadroomConfigPaths({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME });
+        ctx.ui.notify(`Shared Threadroom is off. Use /threadroom-config to enable it, then /reload.\nComputer: ${paths.globalPath}\nProject: ${paths.projectPath}`, 'info');
+        return;
+      }
+      ensureSharedRuntime(); await managedService?.ensure(); const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info');
+    } });
 }

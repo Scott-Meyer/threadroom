@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { stripVTControlCharacters } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -54,11 +54,14 @@ async function fixture(t, { staleApiAlias = false } = {}) {
     child.once('error', reject);
     child.once('exit', (code, signal) => reject(new Error(`Service exited (${code}/${signal}): ${log}`)));
   }), 3000);
-  const before = { api: process.env.THREADROOM_API_URL, ui: process.env.THREADROOM_UI_URL, replace: process.env.THREADROOM_REPLACE_ASK };
+  const before = { api: process.env.THREADROOM_API_URL, ui: process.env.THREADROOM_UI_URL, replace: process.env.THREADROOM_REPLACE_ASK,
+    agentDir: process.env.PI_CODING_AGENT_DIR };
+  await writeFile(resolve(directory, 'threadroom.json'), '{"shared":true}\n');
+  process.env.PI_CODING_AGENT_DIR = directory;
   process.env.THREADROOM_API_URL = url; process.env.THREADROOM_UI_URL = url;
   if (staleApiAlias) process.env.THREADROOM_REPLACE_ASK = '1'; else delete process.env.THREADROOM_REPLACE_ASK;
   const { discoverAndLoadExtensions } = await host('dist/core/extensions/loader.js');
-  const loaded = await discoverAndLoadExtensions([resolve(root, 'packages/pi-extension/extensions')], root, '/nonexistent/threadroom-test-agent');
+  const loaded = await discoverAndLoadExtensions([resolve(root, 'packages/pi-extension/extensions')], root, directory);
   assert.deepEqual(loaded.errors, []);
   assert.equal(loaded.extensions.length, 1, 'helpers are not discovered as extra extensions');
   const extension = loaded.extensions[0];
@@ -69,13 +72,14 @@ async function fixture(t, { staleApiAlias = false } = {}) {
     getSessionName: () => 'Motion teammate', appendEntry: (customType, data) => branch.push({ type: 'custom', customType, data }),
     sendMessage: (message, options) => messages.push({ message, options }),
   });
-  const ctx = { mode: 'rpc', hasUI: true, sessionManager: { getSessionId: () => 'presentation-session', getBranch: () => branch },
+  const ctx = { mode: 'rpc', hasUI: true, cwd: root, isProjectTrusted: () => false,
+    sessionManager: { getSessionId: () => 'presentation-session', getBranch: () => branch },
     isIdle: () => true, ui: { setStatus() {}, notify: (text) => notices.push(text) } };
   for (const handler of extension.handlers.get('session_start')) await handler({}, ctx);
   t.after(async () => {
     for (const handler of extension.handlers.get('session_shutdown')) await handler({}, ctx);
     for (const [name, value] of Object.entries(before)) {
-      const key = { api: 'THREADROOM_API_URL', ui: 'THREADROOM_UI_URL', replace: 'THREADROOM_REPLACE_ASK' }[name];
+      const key = { api: 'THREADROOM_API_URL', ui: 'THREADROOM_UI_URL', replace: 'THREADROOM_REPLACE_ASK', agentDir: 'PI_CODING_AGENT_DIR' }[name];
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });

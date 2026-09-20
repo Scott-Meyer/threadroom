@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolveSdkPeer } from './sdk-peer.mjs';
 const [root, sdk] = process.argv.slice(2);
 const host = (path) => import(pathToFileURL(resolve(sdk, path)).href);
@@ -36,7 +37,7 @@ tui.addChild(input); tui.setFocus(input);
 const manager = SessionManager.inMemory(root);
 let widget, notices = [];
 const stock = { mode: 'tui', hasUI: true, cwd: root, isIdle: () => true,
-  isProjectTrusted: () => false, sessionManager: manager, ui: {
+  sessionManager: manager, ui: { // Older Pi contexts have no project-trust method; shared config must still fail closed.
     theme: themes.theme, notify(text) { notices.push(text); }, setStatus() {},
     setWidget(_key, factory) {
       if (widget) { widget.dispose?.(); tui.removeChild(widget); widget = undefined; }
@@ -44,6 +45,17 @@ const stock = { mode: 'tui', hasUI: true, cwd: root, isIdle: () => true,
     },
   } };
 loaded.runtime.appendEntry = (type, data) => { appends++; manager.appendCustomEntry(type, data); };
+let activeTools = [...extension.tools.keys()];
+loaded.runtime.getActiveTools = () => [...activeTools]; loaded.runtime.setActiveTools = (names) => { activeTools = [...names]; };
+for (const handler of extension.handlers.get('session_start') || []) await handler({}, stock);
+assert.deepEqual(activeTools.sort(), ['ask_user_question', 'ask_user_question_async'], 'shared tools are inactive by default');
+const configPath = resolve(process.env.PI_CODING_AGENT_DIR, 'threadroom.json');
+await extension.commands.get('threadroom-config').handler('project on', stock);
+assert.match(notices.at(-1), /trusted project/, 'older contexts cannot grant project overrides');
+await extension.commands.get('threadroom-config').handler('computer on', stock);
+assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), { shared: true }, 'extension command writes the computer-wide setting');
+await extension.commands.get('threadroom-config').handler('computer inherit', stock);
+assert.equal(existsSync(configPath), false, 'extension command can restore the built-in default'); notices = [];
 const abort = new AbortController();
 const blocker = extension.tools.get('ask_user_question').definition.execute('stock-blocking-only', { questions: [{ question: 'TEST stock blocker?', options: [{ label: 'One' }, { label: 'Two' }] }] }, abort.signal, () => {}, stock);
 const blockerOutcome = blocker.catch(error => error);
@@ -133,4 +145,4 @@ await assert.rejects(extension.tools.get('ask_user_question').definition.execute
 assert.equal((await extension.tools.get('ask_user_question_async').definition.execute('blocked-async', { question: 'TEST blocked async?' }, undefined, () => {}, stock)).details.status, 'session_changing');
 await extension.commands.get('asks').handler('', stock); assert.match(notices.at(-1), /run \/reload/);
 assert.equal(sends, 2, 'unknown transition outcome stays closed instead of guessing when to flush');
-console.log(JSON.stringify({ syntheticNotScott: true, humanAcceptance: false, realMainFactory: true, rawProducerRegistrationsExactlyOnce: true, sharedToolsRemainSeparate: true, printNotHumanCancel: true, olderSdkCapabilityBoundary: true, stockBlockingOnlyAsks: true, stockAsyncPersistence: true, stockPromotionIdentity: true, stockPromotionNoDuplicate: true, stockPromotionCancelPreservesQuestion: true, stockAnswerBeforeWaitNoDuplicate: true, stockSaveThenAbortRecoversFeedback: true, stockSettledHandoffBoundarySafe: true, stockFreshCompletionBoundarySafe: true, stockRpcCompletionBoundarySafe: true, stockImmediateWaitBoundarySafe: true, stockTransitionGatesBothProducers: true, stockUnknownTransitionStaysClosed: true, stockOriginalEditorCaret: true, registrations: names }, null, 2));
+console.log(JSON.stringify({ syntheticNotScott: true, humanAcceptance: false, realMainFactory: true, rawProducerRegistrationsExactlyOnce: true, sharedToolsRemainSeparate: true, sharedToolsDefaultOff: true, printNotHumanCancel: true, olderSdkCapabilityBoundary: true, stockBlockingOnlyAsks: true, stockAsyncPersistence: true, stockPromotionIdentity: true, stockPromotionNoDuplicate: true, stockPromotionCancelPreservesQuestion: true, stockAnswerBeforeWaitNoDuplicate: true, stockSaveThenAbortRecoversFeedback: true, stockSettledHandoffBoundarySafe: true, stockFreshCompletionBoundarySafe: true, stockRpcCompletionBoundarySafe: true, stockImmediateWaitBoundarySafe: true, stockTransitionGatesBothProducers: true, stockUnknownTransitionStaysClosed: true, stockOriginalEditorCaret: true, registrations: names }, null, 2));

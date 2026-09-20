@@ -24,9 +24,22 @@ The SDK can mutate memory before a failed disk write. Native records then remain
 
 Threadroom can bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
+The shared lane is **off by default**; private questions remain available. `/threadroom-config` opens the extension’s configuration picker. It can save a computer-wide default or, in a trusted project, an overriding project value. Command arguments are also accepted:
+
+```text
+/threadroom-config computer on
+/threadroom-config computer off
+/threadroom-config computer inherit
+/threadroom-config project on
+/threadroom-config project off
+/threadroom-config project inherit
+```
+
+The durable files are `~/.pi/agent/threadroom.json` (or Pi’s configured agent directory) and `<project>/.pi/threadroom.json`. Project configuration is not read before Pi trusts that project. Missing settings inherit downward from the built-in off default. A malformed effective setting fails the shared lane closed without disabling private questions; an explicit valid trusted-project value can still override a malformed computer default, which remains visible as a warning. Run `/reload` after changing the setting. When off, shared tools are absent from the model’s active tool set, configured shared endpoints are not parsed or contacted, restored shared watches do not connect, and no managed service starts.
+
 ## Try it
 
-Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Shared Threadroom tools lazily ensure the bundled local service unless an explicit endpoint or opt-out assigns that responsibility elsewhere. From this repository, load the extension explicitly:
+Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Once enabled, shared Threadroom tools lazily ensure the bundled local service unless an explicit endpoint or startup opt-out assigns that responsibility elsewhere. From this repository, load the extension explicitly:
 
 ```sh
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
@@ -34,9 +47,9 @@ pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 
 That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question` or `ask_user_question_async`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
 
-The packed adapter includes the local service runtime. On the first shared Threadroom request—or when a session restores active shared watches—it reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
+The packed adapter includes the local service runtime. After the shared lane is enabled, the first shared Threadroom request—or restoration of active shared watches—reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
 
-Configuration uses environment variables:
+After shared Threadroom is enabled through `/threadroom-config`, runtime/service configuration uses environment variables:
 
 - `THREADROOM_API_URL`: an explicitly owned API endpoint. Setting it disables automatic local startup, even when it names localhost. Set the literal default URL too when intentionally using a checkout/supervised service with its own database.
 - `THREADROOM_UI_URL`: website address; defaults to the API address. Set it separately for an independently hosted website.
@@ -53,7 +66,7 @@ Shared tools use owned Node HTTP/HTTPS connections, not host `fetch` or its glob
 
 `threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. It is a separate shared capability, not an emulator of the native questionnaire schema.
 
-`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints. Default local use can start the bundled service; explicitly configured endpoints are only connected to, never started or replaced.
+`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints. Enabled local use can start the bundled service; explicitly configured endpoints are only connected to, never started or replaced.
 
 Pi shows readable questions, saved reply intent, and durable discussion links—not raw authored programs or JSON envelopes. Expanded views reveal more history and receipt identity. Saved text is literal terminal text, not executable controls or Markdown. The full machine-facing records remain unchanged.
 
