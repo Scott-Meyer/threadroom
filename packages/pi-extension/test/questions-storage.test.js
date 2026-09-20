@@ -9,5 +9,6 @@ test('actual SDK filesystem failures cannot become native answers or receipts; r
   const result = spawnSync(process.execPath, [fixture, root, sdk], { encoding: 'utf8', timeout: 25000 });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const proof = JSON.parse(result.stdout); assert.equal(proof.humanAcceptance, false);
-  assert.deepEqual(proof.details.map((item) => item.scenario), ['question', 'answer', 'receipt', 'preappend']);
+  assert.deepEqual(proof.details.map((item) => item.scenario), ['question', 'answer', 'receipt', 'blocking-receipt', 'preappend']);
+  assert.equal(proof.details.find((item) => item.scenario === 'blocking-receipt').extraSends, 0);
 });

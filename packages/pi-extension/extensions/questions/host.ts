@@ -377,7 +377,12 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
     enqueue(group: QuestionGroup) {
       ensure();
       if (group.mode === 'blocking' && !hasBlocker()) modalPaneTab = displayKey();
-      return model.enqueue(group);
+      const handle = model.enqueue(group);
+      return { outcome: handle.outcome, detach: handle.detach, answered: handle.answered,
+        require(value: boolean) {
+          if (value && !hasBlocker()) modalPaneTab = displayKey();
+          handle.require(value);
+        } };
     },
     select(groupId: string, questionId?: string) { ensure(); const tab = model.tabs().find((tab) => tab.groupId === groupId && tab.questionId === questionId); if (tab) collapsed.delete(JSON.stringify([tab.key, tab.incarnation])); chat = false; chatFrom = undefined; model.select(groupId, questionId); reconcile(); },
     /** Explicit person action; automatic selection/projection never lends stock focus. */

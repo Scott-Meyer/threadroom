@@ -154,11 +154,14 @@ export function renderAsyncAskResult(result: Result, options: ToolRenderResultOp
 }
 
 export function renderBlockingAskCall(args: unknown, theme: Theme, context?: ToolRenderContext): Component {
-  const questions = list(record(args).questions), first = questions[0];
-  const rows: Row[] = context?.expanded ? questions.flatMap((question, index) => [
-    { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
-  ]) : questions.length > 1 ? [{ text: `${questions.length} questions · waits for this group`, color: 'dim', compact: true }] : [];
-  return card('question', 'Question request', title(first), ['PRIVATE', 'BLOCKING', callReference(context)], rows, theme);
+  const input = record(args), questionId = identity(input.questionId), questions = list(input.questions), first = questions[0];
+  const rows: Row[] = questionId
+    ? context?.expanded ? literal('Existing question identity', questionId) : []
+    : context?.expanded ? questions.flatMap((question, index) => [
+      { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
+    ]) : questions.length > 1 ? [{ text: `${questions.length} questions · waits for this group`, color: 'dim', compact: true }] : [];
+  return card('question', questionId ? 'Wait for existing question' : 'Question request', title(first),
+    ['PRIVATE', 'BLOCKING', questionId ? reference('q', input.questionId) : callReference(context)], rows, theme);
 }
 function blockingAnswerRows(value: unknown, specs: unknown[], expanded: boolean, ref: string): Row[] {
   const answer = record(value), index = integer(answer.questionIndex) ? answer.questionIndex : undefined;
@@ -189,17 +192,26 @@ function blockingAnswerRows(value: unknown, specs: unknown[], expanded: boolean,
 /** Partial replies retain authored indices; abort/errors never become a human cancel. */
 export function renderBlockingAskResult(result: Result, options: ToolRenderResultOptions, theme: Theme, context?: ToolRenderContext): Component {
   const details = record(result.details), answers = list(details.answers), specs = list(record(context?.args).questions);
+  const questionId = identity(details.questionId) || identity(record(context?.args).questionId), existing = !!questionId;
   const partial = options?.isPartial || context?.isPartial, error = context?.isError;
   const recognizedReply = typeof details.cancelled === 'boolean' || Array.isArray(details.answers);
-  const heading = error ? 'Question request failed' : partial ? 'Reply update' : details.cancelled === true ? 'Questionnaire cancelled' : recognizedReply ? 'Your replies' : 'Question request result';
-  const metadata = ['PRIVATE', 'BLOCKING', callReference(context) || reference('group', details.groupId)];
+  const heading = error ? 'Question request failed' : partial ? 'Reply update'
+    : existing && details.cancelled === true ? 'Question wait cancelled'
+    : existing ? 'Question wait result'
+    : details.cancelled === true ? 'Questionnaire cancelled' : recognizedReply ? 'Your replies' : 'Question request result';
+  const metadata = ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || record(context?.args).questionId) : callReference(context) || reference('group', details.groupId)];
   const rows: Row[] = [];
-  if (typeof details.cancelled === 'boolean') {
+  if (existing) {
+    if (details.cancelled === true) rows.push({ text: 'Wait cancelled · original async question remains pending', color: 'dim', compact: true });
+    else if (typeof details.waitNote === 'string') rows.push({ text: field(details.waitNote), color: 'dim', compact: true });
+    else if (answers.length) rows.push({ text: 'Saved reply returned through this blocking wait', color: 'dim', compact: true });
+  } else if (typeof details.cancelled === 'boolean') {
     rows.push({ text: `${answers.length} ${answers.length === 1 ? 'reply' : 'replies'}${specs.length ? ` / ${specs.length} original questions` : ''}${details.cancelled ? ' · partial replies retained' : ''}`, color: 'dim', compact: true });
     if (specs.length && answers.length < specs.length) rows.push({ text: 'Some original questions unanswered', color: 'dim', compact: true });
   }
   if (options?.expanded) {
-    rows.push(...literal('Group identity', identity(details.groupId) || undefined));
+    rows.push(...literal(existing ? 'Existing question identity' : 'Group identity', existing ? questionId : identity(details.groupId) || undefined));
+    if (existing && typeof details.waitStatus === 'string') rows.push({ text: `Wait status: ${field(details.waitStatus)}`, color: 'dim' });
     for (const [index, spec] of specs.entries()) rows.push({ text: `Original question ${index + 1}`, color: 'dim' }, ...promptRows(spec));
   }
   for (const answer of answers) rows.push(...blockingAnswerRows(answer, specs, !!options?.expanded, metadata[2]));

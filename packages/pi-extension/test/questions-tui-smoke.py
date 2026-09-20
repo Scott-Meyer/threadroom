@@ -105,11 +105,18 @@ try:
     assert not any(e['event'] == 'provider_feedback' for e in events()), 'missed held-blocker queue window'
     send('\t'); send('\x1b[32u'); send('\x1b[B'); send(' '); send('\x1bn'); send('OPEN_NOTE'); send('\t')
     frame = observe(); assert all(value in '\n'.join(frame['lines']) for value in ['OPEN_NOTE', 'Submit answers', 'Cancel'])
-    send('\r'); wait(lambda: any(e['event'] == 'tool_end' and e['name'] == 'ask_user_question' for e in events()), 'partial blocker did not complete')
-    result = next(e['result'] for e in events() if e['event'] == 'tool_end' and e['name'] == 'ask_user_question')
+    send('\r'); wait(lambda: any(e['event'] == 'tool_end' and e['id'] == 'BLOCK_B' for e in events()), 'partial blocker did not complete')
+    result = next(e['result'] for e in events() if e['event'] == 'tool_end' and e['id'] == 'BLOCK_B')
     assert len(result['details']['answers']) == 1
     answer = result['details']['answers'][0]; assert answer['questionIndex'] == 1 and answer['selected'] == ['North', 'South'] and answer['notes'] == 'OPEN_NOTE'
-    frame = observe(); assert not frame['editorLike'] and current(frame)['tab']['mode'] == 'async', 'answering the required group returned to Chat before remaining async work'
+    frame = observe(); assert not frame['editorLike'] and current(frame)['tab']['questionId'] == c['id'], 'answering the required group returned to Chat before remaining async work'
+    wait(lambda: any(e['event'] == 'tool_start' and e['id'] == 'PROMOTE_C' for e in events()), 'existing async question was not promoted by stable ID')
+    frame = observe(); assert current(frame)['tab']['questionId'] == c['id'] and current(frame)['tab']['mode'] == 'blocking' and not frame['editorLike']
+    assert 'Response required' in '\n'.join(frame['lines'])
+    send('\x1b'); wait(lambda: any(e['event'] == 'tool_end' and e['id'] == 'PROMOTE_C' for e in events()), 'promoted wait did not release')
+    promoted = next(e['result']['details'] for e in events() if e['event'] == 'tool_end' and e['id'] == 'PROMOTE_C')
+    assert promoted['questionId'] == c['id'] and promoted['cancelled'] is True and 'receivedNativeAnswerIds' not in promoted
+    frame = observe(); assert current(frame)['tab']['questionId'] == c['id'] and current(frame)['tab']['mode'] == 'async' and not frame['editorLike'], 'releasing pane-owned wait did not preserve its async question'
     wait(lambda: any(e['event'] == 'settled' for e in events()), 'actual provider did not settle')
     send('\x1b'); send('\x15/reload\r')
     old_nonce = frame['nonce']; wait(lambda: any(e['event'] == 'ready' and e['nonce'] != old_nonce for e in events()), 'real reload did not produce fresh activation')
@@ -139,7 +146,7 @@ try:
     proof = dict(syntheticNotScott=True, humanAcceptance=False, activated=False, freshOwnedImplementation=True, physicalPty=True,
                  privateDiskOriginalAssociations=True, actualProviderExactAnswerIds=True, matchingDiskReceiptsAfterExit=True,
                  asyncArrivalPassive=True, blockingSurfaceModal=True, jointBlockingPriorityAndIndependentSave=True, bothDraftsCollapseExternalEditor=True, reviewPartialChecksOpenNotes=True,
-                 hotReloadNoHelperPrompt=True, fullNativePreview80x18=True, coldResumeNotClaimed=True,
+                 hotReloadNoHelperPrompt=True, fullNativePreview80x18=True, coldResumeNotClaimed=True, promotedStableIdCancelPreservesAsync=True,
                  builtinModelShortcutBlocked=matrix, foreignSelectorIsolation=matrix, actualPreappendFailureDraftRetry=matrix,
                  observationQualification='Initial public custom setup once per process; F12 samples public focused render which may reconcile. IO/render overhead explicit.')
     (directory / 'proof.json').write_text(json.dumps(proof, indent=2) + '\n'); print(json.dumps(proof))

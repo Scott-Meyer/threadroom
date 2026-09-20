@@ -50,6 +50,25 @@ test('async failure preserves exact draft; saving holds only that cell while blo
   assert.match(model.current().error, /provider failure/); assert.equal(model.current().reply, 'exact draft'); await model.confirm(); assert.equal(model.tabs().length, 0); assert.equal(attempts, 2);
 });
 
+test('a required lease keeps the native cell and persistence contract while distinguishing answer from released wait', async () => {
+  const saved = [], model = new QuestionModel(); let promoted;
+  promoted = model.enqueue({ ...asyncGroup('A', (id, answer) => saved.push({ id, answer })), releaseRequirement() { promoted.require(false); } });
+  model.setReply('draft survives promotion'); model.enqueue(asyncGroup('C'));
+  promoted.require(true);
+  assert.equal(model.current().tab.questionId, 'A');
+  assert.deepEqual(model.tabs().map((tab) => tab.mode), ['blocking', 'async']);
+  assert.equal(model.current().reply, 'draft survives promotion');
+  await model.confirm();
+  assert.equal(saved[0].answer.answer, 'draft survives promotion');
+  assert.equal(model.takeBlockingCompletion(), 'answered');
+  assert.equal(model.current().tab.questionId, 'C');
+
+  let released; released = model.enqueue({ ...asyncGroup('B'), releaseRequirement() { released.require(false); } }); model.select('B', 'B'); model.setReply('still pending');
+  released.require(true); released.require(false);
+  assert.equal(model.takeBlockingCompletion(), 'detached');
+  assert.equal(model.current().tab.mode, 'async'); assert.equal(model.current().reply, 'still pending');
+});
+
 test('a source that cannot persist notes never accepts them into a saved answer', async () => {
   let saved; const model = new QuestionModel(); model.enqueue({ id: 'native', mode: 'async', questions: [question('n', { allowNotes: false })], commit(_id, answer) { saved = answer; } });
   model.setNotes('unsupported'); assert.equal(model.draftEdit().replaceNotes('unsupported'), false);

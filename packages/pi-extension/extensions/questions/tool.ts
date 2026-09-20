@@ -9,20 +9,24 @@ export type QuestionPresenter = (
   group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal,
 ) => Promise<QuestionResult>;
 
-// These authoring limits belong to this tool, not to the shared question renderer.
+// These authoring limits belong to new blocking groups, not to a referenced
+// native question or the shared renderer.
+const authoredQuestions = Type.Array(Type.Object({
+  question: Type.String({ minLength: 1, description: 'The question to ask.' }),
+  header: Type.Optional(Type.String({ maxLength: 16, description: 'Short tab label.' })),
+  context: Type.Optional(Type.String({ description: 'Context useful when answering.' })),
+  options: Type.Array(Type.Object({
+    label: Type.String({ minLength: 1, maxLength: 60 }),
+    description: Type.Optional(Type.String()),
+    preview: Type.Optional(Type.String({ description: 'Content to compare when choosing this option.' })),
+  }, { additionalProperties: false }), { minItems: 2, maxItems: 4 }),
+  multiSelect: Type.Optional(Type.Boolean()),
+}, { additionalProperties: false }), { minItems: 1, maxItems: 4 });
 const parameters = Type.Object({
-  questions: Type.Array(Type.Object({
-    question: Type.String({ minLength: 1, description: 'The question to ask.' }),
-    header: Type.Optional(Type.String({ maxLength: 16, description: 'Short tab label.' })),
-    context: Type.Optional(Type.String({ description: 'Context useful when answering.' })),
-    options: Type.Array(Type.Object({
-      label: Type.String({ minLength: 1, maxLength: 60 }),
-      description: Type.Optional(Type.String()),
-      preview: Type.Optional(Type.String({ description: 'Content to compare when choosing this option.' })),
-    }, { additionalProperties: false }), { minItems: 2, maxItems: 4 }),
-    multiSelect: Type.Optional(Type.Boolean()),
-  }, { additionalProperties: false }), { minItems: 1, maxItems: 4 }),
-}, { additionalProperties: false });
+  questions: Type.Optional(authoredQuestions),
+  questionId: Type.Optional(Type.String({ minLength: 1,
+    description: 'Stable pending ID returned by ask_user_question_async. Waits on that saved question without asking it again.' })),
+}, { additionalProperties: false, description: 'Provide either new questions or one existing async questionId, not both.' });
 
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
@@ -144,8 +148,18 @@ async function dialogs(group: QuestionGroup, ctx: ExtensionContext, signal: Abor
   return { answers, cancelled: decision !== submit };
 }
 
+export type ExistingQuestionWait = (questionId: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Readonly<{
+  sessionId: string;
+  questionId: string;
+  answerId?: string;
+  status: 'answered' | 'cancelled' | 'already_queued' | 'already_received' | 'already_claimed';
+  note?: string;
+  releaseClaim?: () => void;
+  result: QuestionResult;
+}>>;
+
 /** Registers a private blocking producer; no network, durable store, or global settings changes. */
-export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPresenter): void {
+export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPresenter, waitExisting?: ExistingQuestionWait): void {
   const active = new Set<AbortController>();
   let retired = false;
   pi.on('session_shutdown', () => {
@@ -158,9 +172,9 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
   pi.registerTool({
     name: 'ask_user_question',
     label: 'Ask Questions',
-    description: 'Ask 1–4 private blocking questions with 2–4 suggestions each. The person can choose, write a custom answer, add notes, or submit partial answers. Duplicate labels retain separate option identities. Result text is limited to 2000 lines/50KB; full answers remain in details.',
-    promptSnippet: 'Ask private questions when an answer is needed before continuing',
-    promptGuidelines: ['Use ask_user_question for decisions needed to continue; ask_user_question_async lets independent work continue while an answer is pending.'],
+    description: 'Ask 1–4 new private blocking questions, or pass questionId from ask_user_question_async to wait on that exact pending question without asking it again. New questions have 2–4 suggestions and support custom answers, notes, partial submission, and duplicate labels. A referenced async question keeps its original choices and saved identity. Result text is limited to 2000 lines/50KB; full answers remain in details.',
+    promptSnippet: 'Ask private questions when an answer is needed before continuing, or wait on an existing async question by ID',
+    promptGuidelines: ['Use ask_user_question for decisions needed to continue. ask_user_question_async returns a stable ID; pass it back as questionId when later work becomes blocked on that same pending question.'],
     parameters,
     renderShell: 'self',
     renderCall: renderBlockingAskCall,
@@ -174,15 +188,36 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
       if (!ctx.hasUI || ctx.mode === 'print' || ctx.mode === 'json') {
         throw failure('unsupported_host', 'ask_user_question needs an interactive TUI or SDK dialog host; no question was presented and no human declined.');
       }
-      const group: QuestionGroup = Object.freeze({
-        id: `blocking:${toolCallId}`, mode: 'blocking',
-        questions: Object.freeze(params.questions.map((spec, index) => Object.freeze({
-          ...spec, id: `question:${index}`,
-          options: Object.freeze(spec.options.map((option) => Object.freeze({ ...option }))),
-        }))),
-      });
+      const referencesExisting = typeof params.questionId === 'string';
+      if (referencesExisting === Array.isArray(params.questions)) {
+        throw failure('invalid_arguments', 'Provide either questions or questionId, not both.');
+      }
       active.add(controller);
       try {
+        if (referencesExisting) {
+          if (ctx.mode !== 'tui' || !waitExisting) throw failure('unsupported_host', 'Waiting on an existing private async question needs the interactive TUI host that owns it.');
+          let waited: Awaited<ReturnType<ExistingQuestionWait>> | undefined;
+          try {
+            // The native wait already owns lifetime cancellation. Keeping its
+            // resolved value visible here lets a final abort release a claim
+            // before any answer-bearing tool result exists.
+            waited = await waitExisting(params.questionId!, ctx, lifetime);
+            lifetime.throwIfAborted();
+            const text = waited.note ? JSON.stringify({ status: waited.status, questionId: waited.questionId, note: waited.note }) : resultText(waited.result);
+            return { content: [{ type: 'text', text }], details: {
+              groupId: `native:${waited.questionId}`, sessionId: waited.sessionId, questionId: waited.questionId,
+              waitStatus: waited.status, ...(waited.note ? { waitNote: waited.note } : {}),
+              ...(waited.status === 'answered' && waited.answerId ? { receivedNativeAnswerIds: [waited.answerId] } : {}), ...waited.result,
+            } };
+          } catch (error) { waited?.releaseClaim?.(); throw error; }
+        }
+        const group: QuestionGroup = Object.freeze({
+          id: `blocking:${toolCallId}`, mode: 'blocking',
+          questions: Object.freeze(params.questions!.map((spec, index) => Object.freeze({
+            ...spec, id: `question:${index}`,
+            options: Object.freeze(spec.options.map((option) => Object.freeze({ ...option }))),
+          }))),
+        });
         const result = await abortable(() => ctx.mode === 'tui' ? present(group, ctx, lifetime) : dialogs(group, ctx, lifetime), lifetime);
         lifetime.throwIfAborted();
         return { content: [{ type: 'text', text: resultText(result) }], details: { groupId: group.id, ...result } };

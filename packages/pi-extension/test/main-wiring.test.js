@@ -13,5 +13,10 @@ test('actual package MAIN registers each owned private producer once while keepi
   assert.equal(proof.olderSdkCapabilityBoundary, true);
   assert.equal(proof.stockBlockingOnlyAsks, true);
   assert.equal(proof.stockAsyncPersistence, true);
+  assert.equal(proof.stockPromotionIdentity, true);
+  assert.equal(proof.stockPromotionNoDuplicate, true);
+  assert.equal(proof.stockPromotionCancelPreservesQuestion, true);
+  assert.equal(proof.stockAnswerBeforeWaitNoDuplicate, true);
+  assert.equal(proof.stockSaveThenAbortRecoversFeedback, true);
   assert.equal(proof.stockOriginalEditorCaret, true);
 });

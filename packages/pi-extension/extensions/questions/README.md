@@ -8,7 +8,7 @@ This is a fresh implementation. The existing questionnaire informed the experien
 
 `registerPrivateQuestions(pi)` registers our blocking `ask_user_question` and nonblocking `ask_user_question_async` once. It does not install resources or connect to Threadroom. The package MAIN uses this composition; loading it alongside another producer with the same name would be duplicate wiring. Preparing that entry point does not reload or change the resources of a running Pi session.
 
-Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane.
+Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane. An async result includes its stable question ID; passing that ID as `ask_user_question({ questionId })` leases requiredness to the same pending cell instead of creating or publishing another question. The native source still owns saving. Escape releases the wait while preserving the async question and draft.
 
 In the conversation stream, cyan question cards and violet reply cards use authored titles and identity-based references to connect each exchange. Literal role labels remain readable without color. Operational echoes stay compact; expanding reveals full literal text and structured reply details. “Private” describes the Pi-local audience, not encryption, retention or delivery confirmation; warning/error colors describe actual reported failures rather than the asking or answering role.
 
@@ -24,7 +24,7 @@ Chat keeps native Tab completion for an async-only pane. While async questions a
 
 Optional public `ui.getCoreEditor()` identity distinguishes Chat from unannounced foreign prompts and recognizes the current core editor for a new focus loan. A blocker preserves its exact return until that origin is lost and an authoritative replacement is actually reclaimed. Async-only focus remains explicit. SDK dialog notifications coordinate ordinary prompts but do not identify arbitrary focused components.
 
-Partial blocking submission retains live checks and notes; cancel affects only that group. Notes use Alt+N where supported, not printable `n`. Our native async source does not offer notes because its persisted answer contract is reply text and optional chosen-option identity.
+Partial blocking submission retains live checks and notes; cancel affects only that group. Notes use Alt+N where supported, not printable `n`. Our native async source does not offer notes because its persisted answer contract is reply text and optional chosen-option identity. A promoted native question keeps those original limits rather than acquiring questionnaire notes, multi-select, or narrower authoring bounds.
 
 Escape pauses an async question without declining it; when a blocker is pending, focus returns to a required tab instead of Chat. `/asks` selects pending questions, while automatic async bind/navigation/recovery reveal remains passive. Collapsing an async-only pane returns to the mounted loan origin or authoritative core and preserves drafts. It requires the public terminal-input hook for reopening; hosts without it keep the pane expanded and can still use `/asks` or pause it. Configured SDK external-editor actions edit the original field through a private temporary file, restore the TUI and sanitize the replacement. UI detachment, shutdown and tool abort are not human Cancel.
 
@@ -34,7 +34,7 @@ The presentation port separates pending projection from explicit reveal/focus in
 
 ## Evidence boundary
 
-Saved/pending truth is independent of UI health. A failed projection or reveal does not undo persistence; a queued send is not a receipt. Real sessions, controlled callbacks, synthetic SDK/TUI tests, physical input, provider consumption, post-exit disk receipts and human acceptance are different evidence.
+Saved/pending truth is independent of UI health. A failed projection or reveal does not undo persistence; a queued send is not a receipt. A saved promoted answer is reserved before projection removes its tab, so one answer is not simultaneously returned by the wait and queued as new async feedback. If the async route already queued or received it, the later wait reports that state without returning a second answer. Blocking-result receipts carry the exact session/question/answer identity and receive the same physical-journal check as feedback receipts. Real sessions, controlled callbacks, synthetic SDK/TUI tests, physical input, provider consumption, post-exit disk receipts and human acceptance are different evidence.
 
 The SDK can mutate its branch before a failed disk write. Private append failures that changed that branch are therefore **storage unconfirmed**, not answers we can deliver. The backend excludes failed entry identities and blocks further private writes/delivery on that manager/session, including after `/reload`. Persisted feedback receipts also require a complete row in the public SDK session file; memory-only hosts make no disk assertion. A refusal before branch mutation remains retryable. This is fail-closed handling, not SDK journal rollback or repair: recover the original journal before continuing, and preserve/copy the retained draft before any process replacement.
 

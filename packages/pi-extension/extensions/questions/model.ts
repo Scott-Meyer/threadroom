@@ -1,7 +1,7 @@
-import type { QuestionAnswer, QuestionGroup, QuestionResult, QuestionSpec } from './types.ts';
+import type { AsyncQuestionRequirement, QuestionAnswer, QuestionGroup, QuestionResult, QuestionSpec } from './types.ts';
 
 type Cell = { spec: QuestionSpec; index: number; incarnation: number; option: number; confirmed?: number; custom: boolean; reply: string; notes: string; checked: Set<number>; saving: boolean; error?: string; errorCode?: string };
-type Group = { spec: QuestionGroup; incarnation: number; cells: Cell[]; paused: boolean; reviewChoice: 0 | 1; resolve?: (result: QuestionResult) => void; reject?: (error: Error) => void };
+type Group = { spec: QuestionGroup; incarnation: number; cells: Cell[]; paused: boolean; required: boolean; reviewChoice: 0 | 1; resolve?: (result: QuestionResult) => void; reject?: (error: Error) => void };
 export type QuestionTab = Readonly<{ key: string; groupId: string; questionId?: string; mode: 'blocking' | 'async'; review: boolean; header?: string; incarnation: number }>;
 export type QuestionState = Readonly<{
   tab: QuestionTab; question?: QuestionSpec; index?: number; option?: number;
@@ -22,9 +22,10 @@ export class QuestionModel {
   private changed: () => void;
   constructor(changed: () => void = () => {}) { this.changed = changed; }
   tabs(): readonly QuestionTab[] {
-    return [...this.groups.values()].sort((a, b) => Number(a.spec.mode === 'async') - Number(b.spec.mode === 'async')).flatMap((group) => [
-      ...group.cells.map((cell) => Object.freeze({ key: key(group.spec.id, cell.spec.id), groupId: group.spec.id, questionId: cell.spec.id, mode: group.spec.mode, review: false, header: cell.spec.header, incarnation: cell.incarnation })),
-      ...(group.spec.mode === 'blocking' && group.spec.questions.length > 1 ? [Object.freeze({ key: key(group.spec.id), groupId: group.spec.id, mode: group.spec.mode, review: true, incarnation: group.incarnation })] : []),
+    const mode = (group: Group) => group.required ? 'blocking' as const : group.spec.mode;
+    return [...this.groups.values()].sort((a, b) => Number(mode(a) === 'async') - Number(mode(b) === 'async')).flatMap((group) => [
+      ...group.cells.map((cell) => Object.freeze({ key: key(group.spec.id, cell.spec.id), groupId: group.spec.id, questionId: cell.spec.id, mode: mode(group), review: false, header: cell.spec.header, incarnation: cell.incarnation })),
+      ...(group.spec.mode === 'blocking' && group.spec.questions.length > 1 ? [Object.freeze({ key: key(group.spec.id), groupId: group.spec.id, mode: mode(group), review: true, incarnation: group.incarnation })] : []),
     ]);
   }
   current(): QuestionState | undefined {
@@ -40,14 +41,31 @@ export class QuestionModel {
     if (!input.questions.length || input.questions.some((q) => !q.id) || new Set(input.questions.map((q) => q.id)).size !== input.questions.length) throw new Error('A group needs unique nonempty question identities.');
     if (input.mode === 'async' && !input.commit) throw new Error('Async sources own answer persistence.');
     const questions = Object.freeze(input.questions.map((q) => Object.freeze({ ...q, options: q.options && Object.freeze(q.options.map((option) => Object.freeze({ ...option }))) })));
-    const group: Group = { spec: Object.freeze({ ...input, questions }), incarnation: ++this.serial, cells: questions.map((spec, index) => ({ spec, index, incarnation: ++this.serial, option: 0, custom: !spec.options?.length, reply: '', notes: '', checked: new Set(), saving: false })), paused: false, reviewChoice: 0 };
+    const group: Group = { spec: Object.freeze({ ...input, questions }), incarnation: ++this.serial, cells: questions.map((spec, index) => ({ spec, index, incarnation: ++this.serial, option: 0, custom: !spec.options?.length, reply: '', notes: '', checked: new Set(), saving: false })), paused: false, required: false, reviewChoice: 0 };
     const outcome = input.mode === 'blocking' ? new Promise<QuestionResult>((resolve, reject) => { group.resolve = resolve; group.reject = reject; }) : undefined;
     const previous = this.current()?.tab;
     this.groups.set(input.id, group);
     if (!previous || (input.mode === 'blocking' && previous.mode === 'async')) this.activeKey = this.tabs()[0]?.key;
     else this.activeKey = previous.key;
     this.changed();
-    return { outcome, detach: () => { if (this.groups.get(input.id) !== group) return; this.remove(group, 'detached'); group.reject?.(detached()); } };
+    return { outcome,
+      require: (value: boolean) => this.require(group, value),
+      answered: () => { if (this.groups.get(input.id) === group) this.remove(group, group.required ? 'answered' : undefined); },
+      detach: () => { if (this.groups.get(input.id) !== group) return;
+        this.remove(group, group.spec.mode === 'blocking' || group.required ? 'detached' : undefined); group.reject?.(detached()); } };
+  }
+  private require(group: Group, value: boolean) {
+    if (group.spec.mode !== 'async' || this.groups.get(group.spec.id) !== group || group.required === value) return;
+    if (value && !group.spec.releaseRequirement) throw new Error('A required async group needs a source-owned release callback.');
+    group.required = value;
+    if (value) {
+      group.paused = false;
+      this.activeKey = key(group.spec.id, group.cells[0]?.spec.id);
+    } else {
+      this.blockingCompletion = 'detached';
+      if (!this.tabs().some((tab) => tab.key === this.activeKey)) this.activeKey = this.tabs()[0]?.key;
+    }
+    this.changed();
   }
   select(groupId: string, questionId?: string) {
     const target = this.tabs().find((tab) => tab.key === key(groupId, questionId));
@@ -128,7 +146,7 @@ export class QuestionModel {
       await group.spec.commit!(cell.spec.id, answer);
       if (this.groups.get(group.spec.id) !== group) return;
       group.cells = group.cells.filter((candidate) => candidate !== cell);
-      if (!group.cells.length) this.remove(group); else this.changed();
+      if (!group.cells.length) this.remove(group, group.required ? 'answered' : undefined); else this.changed();
     } catch (error) {
       if (this.groups.get(group.spec.id) === group) { cell.error = String(error); cell.errorCode = typeof (error as any)?.code === 'string' ? (error as any).code : undefined; this.changed(); }
     } finally { if (!this.disposed && this.groups.get(group.spec.id) === group) { cell.saving = false; this.changed(); } }
@@ -141,12 +159,15 @@ export class QuestionModel {
   cancel() {
     const current = this.current(); if (!current) return;
     const group = this.groups.get(current.tab.groupId)!;
-    if (group.spec.mode === 'async') { group.paused = true; this.changed(); return; }
+    if (group.spec.mode === 'async') {
+      if (group.required) { group.spec.releaseRequirement?.(current.tab.questionId!); return; }
+      group.paused = true; this.changed(); return;
+    }
     const result = Object.freeze({ answers: this.answers(group.spec.id), cancelled: true }); this.remove(group, 'cancelled'); group.resolve!(result);
   }
-  private remove(group: Group, completion?: 'answered' | 'cancelled' | 'detached') {
+  private remove(group: Group, completion?: AsyncQuestionRequirement | 'cancelled') {
     this.groups.delete(group.spec.id);
-    if (group.spec.mode === 'blocking' && completion) this.blockingCompletion = completion;
+    if ((group.spec.mode === 'blocking' || group.required) && completion) this.blockingCompletion = completion;
     if (!this.tabs().some((tab) => tab.key === this.activeKey)) this.activeKey = this.tabs()[0]?.key;
     this.changed();
   }

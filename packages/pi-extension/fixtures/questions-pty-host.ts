@@ -67,16 +67,20 @@ export default function(pi: any) {
         const results = context.messages.filter((message: any) => message.role === 'toolResult');
         const feedback = context.messages.filter((message: any) => message.role === 'user' && JSON.stringify(message.content).includes('Saved private human feedback for native ask'));
         let content: any[], stopReason = 'toolUse';
-        if (feedback.length) { log({ event: 'provider_feedback', feedback }); content = [{ type: 'text', text: 'TEST_FEEDBACK_CONSUMED' }]; stopReason = 'stop'; }
-        else if (!results.some((message: any) => message.toolName === 'ask_user_question_async')) content = [
+        if (!results.some((message: any) => message.toolName === 'ask_user_question_async')) content = [
           { type: 'toolCall', id: 'NATIVE_A', name: 'ask_user_question_async', arguments: { question: 'TEST_ASYNC_A question?', options: ['Quiet', 'Bright'] } },
           { type: 'toolCall', id: 'NATIVE_C', name: 'ask_user_question_async', arguments: { question: 'TEST_ASYNC_C backlog?', options: [{ label: '同じ' + '長い'.repeat(30), preview: 'FIRST_PREVIEW' }, { label: '同じ' + '長い'.repeat(30), preview: '**SECOND_LITERAL**\n' + Array.from({ length: 30 }, (_value, index) => `PREVIEW_${index}`).join('\n') }] } },
         ];
         else if (!results.some((message: any) => message.toolName === 'question_test_work')) content = [{ type: 'toolCall', id: 'WORK', name: 'question_test_work', arguments: {} }];
-        else if (!results.some((message: any) => message.toolName === 'ask_user_question')) content = [{ type: 'toolCall', id: 'BLOCK_B', name: 'ask_user_question', arguments: { questions: [
+        else if (!results.some((message: any) => message.toolCallId === 'BLOCK_B')) content = [{ type: 'toolCall', id: 'BLOCK_B', name: 'ask_user_question', arguments: { questions: [
           { header: 'B1', question: 'TEST_BLOCK_B1?', options: [{ label: 'Wait' }, { label: 'Go' }] },
           { header: 'B2', question: 'TEST_BLOCK_B2 checks?', multiSelect: true, options: [{ label: 'North' }, { label: 'South' }] },
         ] } }];
+        else if (!results.some((message: any) => message.toolCallId === 'PROMOTE_C')) {
+          const pendingC = results.find((message: any) => message.toolCallId === 'NATIVE_C');
+          content = [{ type: 'toolCall', id: 'PROMOTE_C', name: 'ask_user_question', arguments: { questionId: pendingC.details.id } }];
+        }
+        else if (feedback.length) { log({ event: 'provider_feedback', feedback }); content = [{ type: 'text', text: 'TEST_FEEDBACK_CONSUMED' }]; stopReason = 'stop'; }
         else { content = [{ type: 'text', text: 'TEST_AI_CONTINUED' }]; stopReason = 'stop'; }
         const output = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, content, stopReason, timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
         stream.push({ type: 'start', partial: output }); stream.push({ type: 'done', reason: stopReason, message: output }); stream.end();

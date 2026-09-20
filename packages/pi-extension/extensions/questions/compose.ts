@@ -20,21 +20,34 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
   const presentation: NativeQuestionPresentation = {
     canPresent(context) { return supportsQuestionHost(context); },
     connect(binding) {
-      const captured = ensure(binding.context), handles = new Map<string, { detach(): void }>(); let live = true;
+      type Handle = { detach(): void; answered(): void; require(value: boolean): void };
+      const captured = ensure(binding.context), handles = new Map<string, Handle>(); let live = true;
       return {
-        replace(questions) {
+        replace(questions, state) {
           if (!live) return;
           const pending = new Set(questions.map((question) => question.id));
-          for (const [id, handle] of handles) if (!pending.has(id)) { handle.detach(); handles.delete(id); }
+          const answered = new Set(state?.answeredQuestionIds || []);
+          const required = new Set(state?.requiredQuestionIds || []);
+          for (const [id, handle] of handles) if (!pending.has(id)) {
+            if (answered.has(id)) handle.answered(); else handle.detach();
+            handles.delete(id);
+          }
           for (const question of questions) {
-            if (handles.has(question.id)) continue;
-            const handle = captured.enqueue({ id: `native:${question.id}`, mode: 'async', questions: [{ id: question.id, question: question.prompt.question,
-              context: question.prompt.context, options: question.prompt.options, plainPreview: true, allowNotes: false }],
-              commit(questionId, answer) {
-                if (!live) throw Object.assign(new Error('Private source detached.'), { code: 'presentation_detached' });
-                binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex });
-              } });
-            handles.set(question.id, handle);
+            let handle = handles.get(question.id);
+            if (!handle) {
+              handle = captured.enqueue({ id: `native:${question.id}`, mode: 'async', questions: [{ id: question.id, question: question.prompt.question,
+                context: question.prompt.context, options: question.prompt.options, plainPreview: true, allowNotes: false }],
+                commit(questionId, answer) {
+                  if (!live) throw Object.assign(new Error('Private source detached.'), { code: 'presentation_detached' });
+                  binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex });
+                },
+                releaseRequirement(questionId) {
+                  if (!live) return;
+                  binding.cancelWait(questionId);
+                } });
+              handles.set(question.id, handle);
+            }
+            handle.require(required.has(question.id));
           }
         },
         reveal(questionId, options) {
@@ -53,13 +66,13 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
       };
     },
   };
-  registerNativeAsks(pi, { presentation });
+  const native = registerNativeAsks(pi, { presentation, waitToolName: 'ask_user_question' });
   registerBlockingQuestions(pi, async (group, ctx, signal) => {
     if (!supportsQuestionHost(ctx)) throw Object.assign(new Error('This Pi host does not expose inline widgets; no question was presented and no human declined.'), { code: 'unsupported_host' });
     const handle = ensure(ctx).enqueue(group), detach = () => handle.detach();
     if (signal?.aborted) detach(); else signal?.addEventListener('abort', detach, { once: true });
     try { return await handle.outcome!; } finally { signal?.removeEventListener('abort', detach); }
-  });
+  }, native.waitForQuestion);
   pi.on('ui_prompt_start', () => { foreign = true; host?.suspend(true); });
   pi.on('ui_prompt_end', () => { foreign = false; host?.suspend(false); });
   return { snapshot: () => host?.snapshot(), dispose() { host?.dispose(); host = undefined; owner = undefined; } };

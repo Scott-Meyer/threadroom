@@ -30,4 +30,11 @@ export type QuestionGroup = Readonly<{
   questions: readonly QuestionSpec[];
   /** Successful resolution means source persistence, not AI consumption. */
   commit?: (questionId: string, answer: QuestionAnswer) => void | Promise<void>;
+  /** A person can release a temporary required lease without withdrawing the
+   * original async question. The source settles the waiting consumer. */
+  releaseRequirement?: (questionId: string) => void;
 }>;
+
+/** A native async question can temporarily become required while a tool waits
+ * on the same saved identity. Persistence remains owned by its original source. */
+export type AsyncQuestionRequirement = 'answered' | 'detached';

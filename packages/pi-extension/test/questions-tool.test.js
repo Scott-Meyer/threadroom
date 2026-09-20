@@ -37,13 +37,17 @@ async function fixture(t) {
 // These are SDK-loader/controlled-dialog producer checks, not real TUI or human acceptance.
 test('blocking authoring bounds validate via SDK without restricting duplicate labels or rich comparison data', options, async (t) => {
   const f = await fixture(t);
+  assert.equal(f.tool.parameters.type, 'object', 'provider-facing tool schema keeps an object root');
   assert.deepEqual(f.validate({ questions: [spec()] }).questions[0].options.map((item) => item.label), ['Same', 'Same']);
+  assert.equal(f.validate({ questionId: 'ask-stable-id' }).questionId, 'ask-stable-id');
   assert.equal(f.validate({ questions: [spec('TEST rich?', { options: [{ label: 'Type something.', preview: 'TEST\n'.repeat(4000) }, { label: 'Other' }] })] }).questions.length, 1);
   for (const questions of [[], Array.from({ length: 5 }, () => spec()), [spec('', {})], [spec('TEST?', { options: [] })],
     [spec('TEST?', { options: [{ label: 'Only' }] })], [spec('TEST?', { options: Array.from({ length: 5 }, () => ({ label: 'Many' })) })],
     [spec('TEST?', { header: 'x'.repeat(17) })], [spec('TEST?', { unknown: true })]]) {
     assert.throws(() => f.validate({ questions }), /Validation failed/);
   }
+  await assert.rejects(() => f.tool.execute('neither', {}, undefined, undefined, f.ctx), { code: 'invalid_arguments' });
+  await assert.rejects(() => f.tool.execute('both', { questionId: 'ask-id', questions: [spec()] }, undefined, undefined, f.ctx), { code: 'invalid_arguments' });
 });
 
 test('TUI delegation retains stable group/local IDs and exact authored partial, multi, notes and cancellation results', options, async (t) => {
