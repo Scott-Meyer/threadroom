@@ -52,7 +52,7 @@ Useful configuration:
 - `THREADROOM_SERVE_UI=0`: API-only process (`npm run api` sets this).
 - `THREADROOM_API_URL`, `THREADROOM_UI_URL`, `UI_PORT`: independent website defaults are API `http://127.0.0.1:4310` and UI port `4311`; the adapter’s website link defaults to its API address. An explicit API URL tells the Pi adapter the service is externally owned and disables its local auto-start.
 - `THREADROOM_UI_ORIGINS`: comma-separated allowed browser origins. Defaults permit the independent localhost/127.0.0.1 UI on `4311`; configure this when adding another UI.
-- `/threadroom-config`: configures whether Pi exposes the optional shared tools, computer-wide or for the current trusted project. The built-in default is off; run `/reload` after changing it.
+- `/threadroom`: opens the configuration menu while shared Threadroom is off; `/threadroom-config` is the explicit equivalent. Configuration can be computer-wide or override it for the current trusted project. Run `/reload` after changing it.
 - `THREADROOM_AUTO_START=0`: after the shared lane is enabled, disables the Pi adapter’s managed local startup without assigning a different API URL.
 
 The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. Independently launched modes follow their own foreground/supervisor lifetime; the adapter’s detached managed service survives the Pi process that started it.

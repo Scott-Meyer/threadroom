@@ -35,10 +35,11 @@ const input = new Editor(tui, { borderColor: text => text, selectList: {} });
 input.setText('TEST_STOCK_DRAFT'); input.handleInput('\x1b[D');
 tui.addChild(input); tui.setFocus(input);
 const manager = SessionManager.inMemory(root);
-let widget, notices = [];
+let widget, notices = [], selections = [], selectionPrompts = [];
 const stock = { mode: 'tui', hasUI: true, cwd: root, isIdle: () => true,
   sessionManager: manager, ui: { // Older Pi contexts have no project-trust method; shared config must still fail closed.
     theme: themes.theme, notify(text) { notices.push(text); }, setStatus() {},
+    async select(title, choices) { selectionPrompts.push({ title, choices }); return selections.shift(); },
     setWidget(_key, factory) {
       if (widget) { widget.dispose?.(); tui.removeChild(widget); widget = undefined; }
       if (factory) { widget = factory(tui, themes.theme); tui.addChild(widget); }
@@ -52,8 +53,11 @@ assert.deepEqual(activeTools.sort(), ['ask_user_question', 'ask_user_question_as
 const configPath = resolve(process.env.PI_CODING_AGENT_DIR, 'threadroom.json');
 await extension.commands.get('threadroom-config').handler('project on', stock);
 assert.match(notices.at(-1), /trusted project/, 'older contexts cannot grant project overrides');
-await extension.commands.get('threadroom-config').handler('computer on', stock);
-assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), { shared: true }, 'extension command writes the computer-wide setting');
+selections.push('Computer-wide default', 'On');
+await extension.commands.get('threadroom').handler('', stock);
+assert.deepEqual(selectionPrompts.map(({ title }) => title), ['Configure shared Threadroom', 'Computer-wide shared Threadroom'],
+  'disabled /threadroom opens the extension configuration menu');
+assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), { shared: true }, 'the /threadroom menu writes the computer-wide setting');
 await extension.commands.get('threadroom-config').handler('computer inherit', stock);
 assert.equal(existsSync(configPath), false, 'extension command can restore the built-in default'); notices = [];
 const abort = new AbortController();

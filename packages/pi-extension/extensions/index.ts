@@ -21,33 +21,34 @@ export default function threadroom(pi: ExtensionAPI) {
     const privateOnly = active.filter((name) => !sharedToolNames.has(name));
     if (privateOnly.length !== active.length) pi.setActiveTools(privateOnly);
   }
+  async function configureShared(args: string, ctx: any) {
+    const trusted = typeof ctx.isProjectTrusted === 'function' && ctx.isProjectTrusted() === true;
+    const paths = threadroomConfigPaths({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME });
+    const words = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
+    let scope = words[0];
+    if (scope === 'global') scope = 'computer';
+    if (scope === 'local') scope = 'project';
+    if (!['computer', 'project'].includes(scope)) {
+      scope = await ctx.ui.select('Configure shared Threadroom', [
+        'Computer-wide default', ...(trusted ? ['This project'] : []),
+      ]).then((choice: string | undefined) => choice === 'Computer-wide default' ? 'computer' : choice === 'This project' ? 'project' : undefined);
+    }
+    if (!scope) return;
+    if (scope === 'project' && !trusted) { ctx.ui.notify('Project Threadroom overrides require a trusted project.', 'warning'); return; }
+    let setting = words[1];
+    if (!['on', 'off', 'inherit'].includes(setting)) {
+      const choices = scope === 'project' ? ['On', 'Off', 'Inherit computer-wide default'] : ['On', 'Off', 'Use built-in default (off)'];
+      setting = await ctx.ui.select(`${scope === 'project' ? 'Project' : 'Computer-wide'} shared Threadroom`, choices)
+        .then((choice: string | undefined) => choice === 'On' ? 'on' : choice === 'Off' ? 'off' : choice ? 'inherit' : undefined);
+    }
+    if (!setting) return;
+    const path = scope === 'project' ? paths.projectPath : paths.globalPath;
+    writeThreadroomConfig({ path, shared: setting === 'inherit' ? undefined : setting === 'on' });
+    ctx.ui.notify(`Saved ${scope === 'project' ? 'project override' : 'computer-wide default'} in ${path}. Run /reload to apply it.`, 'info');
+  }
   pi.registerCommand('threadroom-config', {
     description: 'Configure optional shared Threadroom tools for this computer or project.',
-    async handler(args, ctx) {
-      const trusted = typeof ctx.isProjectTrusted === 'function' && ctx.isProjectTrusted() === true;
-      const paths = threadroomConfigPaths({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME });
-      const words = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
-      let scope = words[0];
-      if (scope === 'global') scope = 'computer';
-      if (scope === 'local') scope = 'project';
-      if (!['computer', 'project'].includes(scope)) {
-        scope = await ctx.ui.select('Configure shared Threadroom', [
-          'Computer-wide default', ...(trusted ? ['This project'] : []),
-        ]).then((choice) => choice === 'Computer-wide default' ? 'computer' : choice === 'This project' ? 'project' : undefined);
-      }
-      if (!scope) return;
-      if (scope === 'project' && !trusted) { ctx.ui.notify('Project Threadroom overrides require a trusted project.', 'warning'); return; }
-      let setting = words[1];
-      if (!['on', 'off', 'inherit'].includes(setting)) {
-        const choices = scope === 'project' ? ['On', 'Off', 'Inherit computer-wide default'] : ['On', 'Off', 'Use built-in default (off)'];
-        setting = await ctx.ui.select(`${scope === 'project' ? 'Project' : 'Computer-wide'} shared Threadroom`, choices)
-          .then((choice) => choice === 'On' ? 'on' : choice === 'Off' ? 'off' : choice ? 'inherit' : undefined);
-      }
-      if (!setting) return;
-      const path = scope === 'project' ? paths.projectPath : paths.globalPath;
-      writeThreadroomConfig({ path, shared: setting === 'inherit' ? undefined : setting === 'on' });
-      ctx.ui.notify(`Saved ${scope === 'project' ? 'project override' : 'computer-wide default'} in ${path}. Run /reload to apply it.`, 'info');
-    },
+    handler: configureShared,
   });
   const askToolName = 'threadroom_ask';
   pi.registerMessageRenderer(ACTIVITY, renderFeedback);
@@ -258,13 +259,9 @@ export default function threadroom(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand('threadroom', { description: 'Show Threadroom connectivity and this session’s watched discussions.',
-    async handler(_args, ctx) {
-      if (!sharedEnabled) {
-        const paths = threadroomConfigPaths({ cwd: ctx.cwd, agentDir: getAgentDir(), configDirName: CONFIG_DIR_NAME });
-        ctx.ui.notify(`Shared Threadroom is off. Use /threadroom-config to enable it, then /reload.\nComputer: ${paths.globalPath}\nProject: ${paths.projectPath}`, 'info');
-        return;
-      }
+  pi.registerCommand('threadroom', { description: 'Configure Threadroom, or show connectivity and watched discussions when enabled.',
+    async handler(args, ctx) {
+      if (!sharedEnabled) { await configureShared(args, ctx); return; }
       ensureSharedRuntime(); await managedService?.ensure(); const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info');
     } });
 }

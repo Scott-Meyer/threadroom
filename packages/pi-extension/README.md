@@ -24,7 +24,7 @@ The SDK can mutate memory before a failed disk write. Native records then remain
 
 Threadroom can bring someone a question, an experiment, or an interaction you designed—and let the discussion outlive this chat turn. Plain text is enough. A self-contained HTML/CSS/JS document can be a canvas, prototype, comparison, or something we haven't anticipated.
 
-The shared lane is **off by default**; private questions remain available. `/threadroom-config` opens the extension’s configuration picker. It can save a computer-wide default or, in a trusted project, an overriding project value. Command arguments are also accepted:
+The shared lane is **off by default**; private questions remain available. While it is off, `/threadroom` opens the extension’s configuration picker; `/threadroom-config` is the explicit equivalent. It can save a computer-wide default or, in a trusted project, an overriding project value. Command arguments are also accepted:
 
 ```text
 /threadroom-config computer on
@@ -49,7 +49,7 @@ That isolates the trial from existing extensions. For normal project loading, fi
 
 The packed adapter includes the local service runtime. After the shared lane is enabled, the first shared Threadroom request—or restoration of active shared watches—reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
 
-After shared Threadroom is enabled through `/threadroom-config`, runtime/service configuration uses environment variables:
+After shared Threadroom is enabled through `/threadroom` or `/threadroom-config`, runtime/service configuration uses environment variables:
 
 - `THREADROOM_API_URL`: an explicitly owned API endpoint. Setting it disables automatic local startup, even when it names localhost. Set the literal default URL too when intentionally using a checkout/supervised service with its own database.
 - `THREADROOM_UI_URL`: website address; defaults to the API address. Set it separately for an independently hosted website.
