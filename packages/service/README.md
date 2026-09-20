@@ -1,6 +1,6 @@
 # Threadroom service
 
-A private, dependency-free Node 24+ package for the local Threadroom API and website. Neither process needs Pi, a checkout, or the other process to stay alive. They communicate through the existing HTTP API; nothing starts automatically.
+A private, dependency-free Node 24+ package for the local Threadroom API and website. Neither service mode needs Pi or a checkout. The Pi adapter bundles this package and can lazily launch its combined mode; direct CLI commands remain foreground processes under the caller’s control.
 
 ## Pack and run
 
@@ -15,12 +15,15 @@ npm pack --workspace threadroom-service
 Extract the tarball into a stable directory of your choice, then run its CLI with Node 24+ (replace `/absolute/install/package` below). Package-manager installation of the tarball also exposes the `threadroom-service` executable.
 
 ```sh
+# Combined API + website at http://127.0.0.1:4310
+node /absolute/install/package/bin/threadroom-service.js serve
+
+# Or independent foreground processes:
 node /absolute/install/package/bin/threadroom-service.js api
-# In another terminal:
 node /absolute/install/package/bin/threadroom-service.js ui
 ```
 
-The API listens at `http://127.0.0.1:4310`; the website at `http://127.0.0.1:4311`. Both run in the foreground from independent terminals. Stop with Ctrl-C; stopping Pi does not stop those terminals. Do not use Pi's background-task launcher for everyday hosting: Pi shutdown/reload terminates its owned tasks. The API starts empty, without demo records. The UI never opens a database. To run directly from this checkout, use `node packages/service/bin/threadroom-service.js` with the same commands. The recognized checkout CLI uses current source even after a previous pack; an extracted package uses only its bundled snapshot.
+Independent API and website defaults are `4310` and `4311`. All direct commands run in the foreground until Ctrl-C. The adapter’s managed combined child is detached, survives Pi reload/shutdown, and is reused by other Pi sessions after a version/storage health check. Do not use Pi's background-task launcher for everyday hosting: those tasks have different shutdown ownership. The API starts empty, without demo records. The UI never opens a database. To run directly from this checkout, use `node packages/service/bin/threadroom-service.js` with the same commands. The recognized checkout CLI uses current source even after a previous pack; an extracted package uses only its bundled snapshot.
 
 These are **local, unauthenticated loopback services**, not safe public endpoints. The CLI forces loopback binding even if `HOST` is set. Browser CORS checks are not authentication. Do not expose them through a public proxy or tunnel without a separate security design.
 
@@ -43,7 +46,7 @@ node /absolute/install/package/bin/threadroom-service.js ui \
 
 `--database` requires an absolute path. Otherwise `THREADROOM_DB` is honored (a relative environment value is explicitly resolved against the invocation directory); without either, the per-user path above is used. New API directories/files have private permissions; existing directories are not chmodded. Back up the database with a SQLite-aware backup or while the API is stopped, retaining any WAL state.
 
-Ports accept `0` for an OS-selected free port; the ready message reports the actual URL. `--port` overrides `PORT` for API or `UI_PORT` for UI. `--api-url` overrides `THREADROOM_API_URL`. No discovery, socket fallback, or server auto-start occurs. For nondefault UI ports, set `THREADROOM_UI_ORIGINS` on the API to comma-separated allowed browser origins. A port-0 UI origin cannot be known until it reports readiness; configure the API's origins accordingly. `--help` and `--version` do not start services.
+Ports accept `0` for an OS-selected free port; the ready message reports the actual URL. `--port` overrides `PORT` for `serve`/API or `UI_PORT` for UI. `--api-url` overrides `THREADROOM_API_URL`. The CLI itself performs no discovery or background activation. The Pi adapter’s separate ensure boundary starts only its default loopback origin; explicit API URLs remain externally owned. For nondefault UI ports, set `THREADROOM_UI_ORIGINS` on the API to comma-separated allowed browser origins. A port-0 UI origin cannot be known until it reports readiness; configure the API's origins accordingly. `--help` and `--version` do not start services.
 
 ## Optional macOS launchd configuration
 

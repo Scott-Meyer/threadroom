@@ -7,7 +7,7 @@ export class ThreadroomError extends Error {
 }
 
 export class ThreadroomClient {
-  constructor(baseUrl = 'http://127.0.0.1:4310', { uiUrl = baseUrl, timeoutMs = 15000 } = {}) {
+  constructor(baseUrl = 'http://127.0.0.1:4310', { uiUrl = baseUrl, timeoutMs = 15000, beforeConnect } = {}) {
     const url = new URL(baseUrl);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
       throw new Error('Threadroom needs an HTTP(S) address without embedded credentials.');
@@ -15,14 +15,29 @@ export class ThreadroomClient {
     this.baseUrl = url.href.replace(/\/$/, '');
     this.uiUrl = new URL(uiUrl).href.replace(/\/$/, '');
     this.timeoutMs = timeoutMs;
+    this.beforeConnect = beforeConnect;
+    this.lifetime = new AbortController();
     this.transport = new HttpTransport();
   }
   /** Cancel this client's requests/streams and release its sockets. Permanent,
    * idempotent, and independent of Participation.close() and other clients. */
-  close() { return this.transport.close(); }
+  close() { this.lifetime.abort(new Error('Threadroom client is closed.')); return this.transport.close(); }
   link(id) { return `${this.uiUrl}/threads/${encodeURIComponent(id)}`; }
+  async ready(signal) {
+    signal.throwIfAborted();
+    if (!this.beforeConnect) return;
+    const work = Promise.resolve().then(() => this.beforeConnect({ signal }));
+    await new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      work.then((value) => { signal.removeEventListener('abort', abort); resolve(value); },
+        (error) => { signal.removeEventListener('abort', abort); reject(error); });
+    });
+    signal.throwIfAborted();
+  }
   async request(path, { method = 'GET', input, key, signal } = {}) {
-    const combined = AbortSignal.any([AbortSignal.timeout(this.timeoutMs), ...(signal ? [signal] : [])]);
+    const combined = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(this.timeoutMs), ...(signal ? [signal] : [])]);
+    await this.ready(combined);
     let response;
     try {
       response = await this.transport.open(`${this.baseUrl}${path}`, { method, signal: combined,
@@ -51,7 +66,9 @@ export class ThreadroomClient {
 
   // Owned Node SSE supports cancellation/replay without EventSource or fetch.
   async *events(after, signal, onOpen = () => {}) {
-    const response = await this.transport.open(`${this.baseUrl}/api/stream?after=${after}`, { signal,
+    const combined = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]);
+    await this.ready(combined);
+    const response = await this.transport.open(`${this.baseUrl}/api/stream?after=${after}`, { signal: combined,
       headers: { Accept: 'text/event-stream' } });
     if (response.statusCode < 200 || response.statusCode >= 300 ||
         !response.headers['content-type']?.includes('text/event-stream')) {

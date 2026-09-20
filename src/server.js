@@ -3,7 +3,7 @@ import { streamEvents, waitForResponse } from './live.js';
 import { renderPresentationDocument, PRESENTATION_CSP } from './presentations.js';
 
 // The service has no website dependency. A static website handler can be injected for convenience.
-export function createThreadroomServer(store, { websiteHandler = null, allowedOrigins = [] } = {}) {
+export function createThreadroomServer(store, { websiteHandler = null, allowedOrigins = [], runtimeIdentity = {} } = {}) {
   const origins = new Set(allowedOrigins);
   return createServer(async (request, response) => {
     try {
@@ -32,7 +32,9 @@ export function createThreadroomServer(store, { websiteHandler = null, allowedOr
         return json(response, 403, { error: 'Cross-origin browser writes are not permitted' });
       }
 
-      if (url.pathname === '/api/health' && request.method === 'GET') return json(response, 200, { ok: true, service: 'threadroom' });
+      if (url.pathname === '/api/health' && request.method === 'GET') return json(response, 200, {
+        ok: true, service: 'threadroom', apiVersion: 1, website: !!websiteHandler, ...runtimeIdentity
+      });
       if (url.pathname === '/api/tree' && request.method === 'GET') {
         const nodes = store.listNodes().map(({ presentation, response: savedResponse, body: savedBody, ...summary }) => ({
           ...summary, responseKind: savedResponse?.kind || null, hasPresentation: !!presentation

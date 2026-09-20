@@ -51,6 +51,23 @@ test('shared client JSON and split-Unicode SSE work despite broken host fetch/Qo
   for (const [key, value] of dispatchers) assert.equal(globalThis[key], value);
 });
 
+test('startup admission respects caller abort and client close without cancelling a shared service startup', async () => {
+  let release, starts = 0;
+  const startup = new Promise((resolve) => { release = resolve; });
+  const client = new ThreadroomClient('http://127.0.0.1:1', { beforeConnect() { starts++; return startup; } });
+  const pending = assert.rejects(client.request('/api/tree'), /client is closed/);
+  await new Promise((resolve) => setImmediate(resolve)); assert.equal(starts, 1);
+  await client.close(); await pending;
+  release(); await new Promise((resolve) => setImmediate(resolve));
+
+  let abortedStarts = 0;
+  const fresh = new ThreadroomClient('http://127.0.0.1:1', { beforeConnect() { abortedStarts++; } });
+  const abort = new AbortController(); abort.abort();
+  await assert.rejects(fresh.request('/api/tree', { signal: abort.signal }), { name: 'AbortError' });
+  assert.equal(abortedStarts, 0, 'an already-aborted caller cannot start the service');
+  await fresh.close();
+});
+
 test('client close cancels its held stream/body, is permanent/idempotent, and leaves another client usable; abort and timeout include body reads', { timeout: 8000 }, async (t) => {
   let streamReady;
   const ready = new Promise(resolve => { streamReady = resolve; });

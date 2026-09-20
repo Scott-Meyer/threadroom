@@ -6,6 +6,10 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "bin": { "threadroom-service": "bin/threadroom-service.js" },
+  "exports": {
+    "./ensure": "./lib/ensure.js",
+    "./paths": "./lib/paths.js"
+  },
   "files": ["bin/", "lib/", "dist/", "README.md"],
   "scripts": {
     "build": "node scripts/build.js",

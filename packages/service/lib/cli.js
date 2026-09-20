@@ -2,12 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { threadroomDataDirectory, threadroomDatabasePath } from './paths.js';
 
 const packageDir = fileURLToPath(new URL('../', import.meta.url));
 const cliPath = join(packageDir, 'bin/threadroom-service.js');
 const version = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')).version;
 const help = `Threadroom service (Node 24+; local, unauthenticated loopback only)
 
+  threadroom-service serve [--database /absolute/path] [--port 4310]
   threadroom-service api [--database /absolute/path] [--port 4310]
   threadroom-service ui [--api-url http://127.0.0.1:4310] [--port 4311]
   threadroom-service launchd-config --output-dir /absolute/path
@@ -15,21 +17,12 @@ const help = `Threadroom service (Node 24+; local, unauthenticated loopback only
       [--api-url http://127.0.0.1:4310]
   threadroom-service --help | --version
 
-api and ui run in the foreground until stopped. Port 0 chooses a free port.
+serve runs the API and website together; api and ui keep them independent.
+All run in the foreground until stopped. Port 0 chooses a free port.
 API storage: --database, then THREADROOM_DB, then the per-user data directory.
 UI never opens a database. No command installs or activates a background job.
 launchd-config only writes two plists; review and activation are manual.
 `;
-
-function dataDirectory() {
-  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'Threadroom');
-  if (process.platform === 'win32') {
-    const local = process.env.LOCALAPPDATA;
-    return join(local && isAbsolute(local) ? local : join(homedir(), 'AppData', 'Local'), 'Threadroom');
-  }
-  const xdg = process.env.XDG_DATA_HOME;
-  return join(xdg && isAbsolute(xdg) ? xdg : join(homedir(), '.local', 'share'), 'threadroom');
-}
 
 function optionsFor(args, accepted) {
   const options = {};
@@ -61,9 +54,7 @@ function absolute(value, flag) {
 
 function databasePath(options) {
   if (options.database) return absolute(options.database, '--database');
-  // An explicitly supplied relative environment path is deliberate, not a cwd default.
-  if (process.env.THREADROOM_DB) return resolve(process.env.THREADROOM_DB);
-  return join(dataDirectory(), 'threadroom.sqlite');
+  return threadroomDatabasePath();
 }
 
 function apiUrl(value) {
@@ -124,7 +115,7 @@ function generateConfig(options) {
   const uiPort = port(options['ui-port'], 4311, false);
   if (apiPort === uiPort) throw new Error('API and UI need different ports.');
   const url = apiUrl(options['api-url'] || `http://127.0.0.1:${apiPort}`);
-  const directory = dataDirectory();
+  const directory = threadroomDataDirectory();
   // Capture user identity paths, not shell/Pi lifetime or arbitrary ambient settings.
   const environment = { HOME: homedir() };
   if (process.platform !== 'darwin') {
@@ -159,7 +150,7 @@ export async function run(args) {
     generateConfig(optionsFor(rest, ['output-dir', 'database', 'api-port', 'ui-port', 'api-url']));
     return;
   }
-  if (command === 'api') {
+  if (command === 'serve' || command === 'api') {
     const options = optionsFor(rest, ['database', 'port']);
     const database = databasePath(options);
     const listenPort = port(options.port ?? process.env.PORT, 4310);
@@ -168,7 +159,7 @@ export async function run(args) {
     mkdirSync(dirname(database), { recursive: true, mode: 0o700 });
     Object.assign(process.env, {
       THREADROOM_DB: database, PORT: String(listenPort), HOST: '127.0.0.1',
-      THREADROOM_SERVE_UI: '0', THREADROOM_SEED_DEMO: '0'
+      THREADROOM_SERVE_UI: command === 'api' ? '0' : '1', THREADROOM_SEED_DEMO: '0'
     });
     await import(entry);
     return;

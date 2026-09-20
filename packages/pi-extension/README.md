@@ -6,6 +6,8 @@ Keep everyday questions in Pi, and bring a discussion to Threadroom when it shou
 
 Blocking questions take priority within the question pane and await only their own group. Nonblocking questions appear automatically while the AI continues working—not in a hidden inbox. Async-only arrivals leave the current input focused: use Shift+Tab or `/asks` to enter the pane. A blocker selects and focuses the same shared surface; Chat remains unavailable until every blocker is answered or cancelled, while pending async tabs remain usable beside it. Answering the last blocker keeps a remaining nonblocking question focused instead of automatically returning to Chat; cancellation still restores the blocker’s input loan. Same-priority arrivals retain the current draft; suggestions stay visible during writing, and clearing the reply restores choice selection.
 
+`ask_user_question_async` returns a stable ID and an example `waitWith` reference. If later work depends on that same unanswered question, `ask_user_question({ questionId })` temporarily makes its existing tab required and waits for its native saved answer. It neither republishes nor recreates the question, and its original draft, choices, limits, branch identity, and persistence owner remain intact. Escape releases only the wait and returns the still-pending question to async. If its answer was already queued or received through async feedback, the wait reports that state rather than returning the answer a second time.
+
 Use the SDK select keys to choose/confirm, type or paste a free reply, and Tab to cycle forward through question and group-review tabs. In an async-only pane, Shift+Tab selects/unselects questions while preserving both drafts; a solid border means the pane owns focus, and a dotted border means it does not. A blocker has an explicit required marker and warning border; Shift+Tab and collapse cannot leave it. Chat keeps native Tab completion when no blocker is pending. Blocking review supports partial submission, live checks, custom text and Alt+N notes; cancel affects only that group. Native async does not offer notes because its stored answer contract cannot retain them. Async previews are literal text; blocking previews support Markdown.
 
 Escape pauses async questions without declining them or discarding their drafts; with a blocker pending, that returns to a required tab rather than Chat. `/asks [id]` selects pending questions. Collapse is available only without a blocker and returns to the exact input that lent focus, while it remains mounted. The extension never guesses a replacement from editor methods, classes or text. Normal SDK dialog events suppress question focus while another prompt is active; an established modal loan also recognizes its exact stock input. Hosts with optional public `ui.getCoreEditor()` identity can distinguish Chat from unannounced foreign prompts. A blocker returns to its exact modal loan; actually reclaiming an authoritative replacement or explicit stock `/asks` refreshes that loan, while an overlapping unannounced prompt defers the return without losing it. Normal Pi needs no SDK patch. Configured external-editor actions edit the original field and restore the TUI afterward.
@@ -22,7 +24,7 @@ Threadroom can bring someone a question, an experiment, or an interaction you de
 
 ## Try it
 
-Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Shared Threadroom tools need the independent API and website running. From this repository, load the extension explicitly:
+Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Shared Threadroom tools lazily ensure the bundled local service unless an explicit endpoint or opt-out assigns that responsibility elsewhere. From this repository, load the extension explicitly:
 
 ```sh
 pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
@@ -30,12 +32,14 @@ pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
 
 That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question` or `ask_user_question_async`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
 
-Installation does not start the service. The packed package contains this adapter and its owned question modules, not the website, database, or historical reference source.
+The packed adapter includes the local service runtime. On the first shared Threadroom request—or when a session restores active shared watches—it reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
 
 Configuration uses environment variables:
 
-- `THREADROOM_API_URL`: defaults to `http://127.0.0.1:4310`.
-- `THREADROOM_UI_URL`: defaults to `http://127.0.0.1:4311`, or the configured API address when one is supplied. Set it separately for an independently hosted website.
+- `THREADROOM_API_URL`: an explicitly owned API endpoint. Setting it disables automatic local startup, even when it names localhost. Set the literal default URL too when intentionally using a checkout/supervised service with its own database.
+- `THREADROOM_UI_URL`: website address; defaults to the API address. Set it separately for an independently hosted website.
+- `THREADROOM_AUTO_START=0`: keep the default endpoint but require external service ownership.
+- `THREADROOM_DB`: local managed-service database. Relative values resolve against Pi’s invocation directory before the detached service changes directory; otherwise the platform’s per-user Threadroom data path is used.
 
 The experimental `THREADROOM_REPLACE_ASK` API alias has been retired. Threadroom always uses its own tool names; a stale setting cannot redirect ordinary native asks into the shared service.
 
@@ -47,7 +51,7 @@ Shared tools use owned Node HTTP/HTTPS connections, not host `fetch` or its glob
 
 `threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. It is a separate shared capability, not an emulator of the native questionnaire schema.
 
-`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints; the adapter never starts the service.
+`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints. Default local use can start the bundled service; explicitly configured endpoints are only connected to, never started or replaced.
 
 Pi shows readable questions, saved reply intent, and durable discussion links—not raw authored programs or JSON envelopes. Expanded views reveal more history and receipt identity. Saved text is literal terminal text, not executable controls or Markdown. The full machine-facing records remain unchanged.
 

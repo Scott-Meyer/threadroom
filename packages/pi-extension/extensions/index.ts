@@ -4,6 +4,7 @@ import { ThreadroomClient } from '../src/client.js';
 import { Participation } from '../src/participation.js';
 import { renderAskCall, renderDiscussionCall, renderToolResult, renderFeedback, participationNotice } from './presentation/renderers.ts';
 import { registerPrivateQuestions } from './questions/index.ts';
+import { createManagedThreadroomService } from '../src/service-runtime.js';
 
 const STATE = 'threadroom.participation.v1';
 const ACTIVITY = 'threadroom.reply.v1';
@@ -20,9 +21,13 @@ export default function threadroom(pi: ExtensionAPI) {
   let running = false;
   let navigationTimer: ReturnType<typeof setTimeout> | undefined;
   let epoch = 0;
-  const apiUrl = process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310';
-  const uiUrl = process.env.THREADROOM_UI_URL || process.env.THREADROOM_API_URL || 'http://127.0.0.1:4311';
-  const makeClient = () => new ThreadroomClient(apiUrl, { uiUrl });
+  const configuredApiUrl = process.env.THREADROOM_API_URL;
+  const apiUrl = configuredApiUrl || 'http://127.0.0.1:4310';
+  const uiUrl = process.env.THREADROOM_UI_URL || apiUrl;
+  const managedService = !configuredApiUrl && process.env.THREADROOM_AUTO_START !== '0'
+    ? createManagedThreadroomService({ baseUrl: apiUrl, databaseValue: process.env.THREADROOM_DB, invocationCwd: process.cwd() })
+    : undefined;
+  const makeClient = () => new ThreadroomClient(apiUrl, { uiUrl, beforeConnect: managedService ? () => managedService.ensure() : undefined });
   let client = makeClient();
 
   // Only active-branch, same-session checkpoints are inherited. Display names
@@ -200,5 +205,5 @@ export default function threadroom(pi: ExtensionAPI) {
   });
 
   pi.registerCommand('threadroom', { description: 'Show Threadroom connectivity and this session’s watched discussions.',
-    async handler(_args, ctx) { const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info'); } });
+    async handler(_args, ctx) { await managedService?.ensure(); const active = await use(ctx); ctx.ui.notify(participationNotice(active.adjacent(), endpoints), 'info'); } });
 }

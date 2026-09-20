@@ -155,7 +155,7 @@ Subscriptions/waits are live transport, not the only copy of a response. No Pi s
 
 ## Independent UIs and failures
 
-The API does not require or import a website. Optional static hosting is injected by the launcher. `public/client.js` is a rendering-independent HTTP client. Separately hosted browser UIs need their origin listed in `THREADROOM_UI_ORIGINS`; localhost/127.0.0.1 port4311 is permitted by default. CORS/preflight is explicit, and unrelated browser writes fail safely.
+The API does not require or import a website. Optional static hosting is injected by the launcher. `GET /api/health` reports the API protocol version, whether that process hosts the website, and an opaque identity for its selected database; the local Pi starter uses those fields to avoid adopting an unrelated runtime or store. `public/client.js` is a rendering-independent HTTP client. Separately hosted browser UIs need their origin listed in `THREADROOM_UI_ORIGINS`; localhost/127.0.0.1 port 4311 is permitted by default. CORS/preflight is explicit, and unrelated browser writes fail safely.
 
 `400`: invalid input; `403`: disallowed browser write origin; `404`: missing record; `409`: ambiguous path or mismatched idempotency key; `413`: JSON body exceeds 5 MB. Failures carry `{error}`. A lost connection is ambiguous: reuse the same key for unchanged publication/response content. No alternate authoritative store is created when disconnected.
 

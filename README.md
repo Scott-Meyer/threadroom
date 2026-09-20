@@ -7,12 +7,14 @@ A lasting, recursively nestable place for people and AI teammates to bring work,
 Requires **Node 24+**, with no packages to install.
 
 ```sh
-# Separate processes: the website is just an HTTP API client.
+npm start    # API + website at http://127.0.0.1:4310
+
+# Or separate processes: the website is just an HTTP API client.
 npm run api  # http://127.0.0.1:4310
 npm run ui   # http://127.0.0.1:4311
 ```
 
-Or `npm start` serves the API and website together on `4310` for convenience. The backend doesn't require the website. Multiple UIs can consume the same records without database access.
+The Pi adapter can also start the bundled combined service lazily on its first shared Threadroom operation. Private Pi questions do not need or start it. The backend doesn't require the website, and multiple UIs can consume the same records without database access.
 
 ## Try the direction
 
@@ -42,16 +44,17 @@ Ordinary use stays ordinary: `room.ask({project: 'MistFall', question: 'Which di
 
 [API.md](API.md) covers one-call deep publication, reads, responses, event subscriptions, catch-up, and optional blocking asks. A question can return immediately or keep its HTTP call open until a human responds. Timeout/cancellation releases the waiter, not the question.
 
-Records and captured presentation content live in `data/threadroom.sqlite`. Restarting either UI or API does not erase them. The first-spike records migrate to recursive nodes with their IDs, presentations, responses, and retry receipts preserved. No offline writes or divergent fallback store are invented when the backend is unavailable.
+The checkout scripts store records and captured presentation content in `data/threadroom.sqlite`; the packaged/managed service defaults to the platform’s stable per-user Threadroom data directory. Restarting either UI or API does not erase them. The first-spike records migrate to recursive nodes with their IDs, presentations, responses, and retry receipts preserved. No offline writes or divergent fallback store are invented when the backend is unavailable.
 
 Useful configuration:
 
 - `THREADROOM_DB`, `PORT`, `HOST`: backend defaults are `data/threadroom.sqlite`, `4310`, and loopback.
 - `THREADROOM_SERVE_UI=0`: API-only process (`npm run api` sets this).
-- `THREADROOM_API_URL`, `UI_PORT`: independent website defaults are API `http://127.0.0.1:4310` and UI port `4311`.
+- `THREADROOM_API_URL`, `THREADROOM_UI_URL`, `UI_PORT`: independent website defaults are API `http://127.0.0.1:4310` and UI port `4311`; the adapter’s website link defaults to its API address. An explicit API URL tells the Pi adapter the service is externally owned and disables its local auto-start.
 - `THREADROOM_UI_ORIGINS`: comma-separated allowed browser origins. Defaults permit the independent localhost/127.0.0.1 UI on `4311`; configure this when adding another UI.
+- `THREADROOM_AUTO_START=0`: disables the Pi adapter’s managed local startup without assigning a different API URL.
 
-The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. The current host still needs to be awake and both chosen processes need to run.
+The public browser client is `public/client.js`; it has no rendering or persistence dependencies. Website hosting is separate from API/domain behavior. Independently launched modes follow their own foreground/supervisor lifetime; the adapter’s detached managed service survives the Pi process that started it.
 
 ## Independent service package — optional
 
@@ -63,7 +66,7 @@ Run it from an independent terminal or a separately approved supervisor, not a P
 
 The independent [`packages/pi-extension`](packages/pi-extension/README.md) workspace now exposes expressive questions and ordinary thread participation to Pi. Public-boundary checks cover asynchronous publication, optional waiting/cancellation, saved response provenance, replay/restart recovery, and bounded readable receipts. The real Pi loader accepts both source and packed distribution. An actual Pi RPC/Gemini session published an authored comparison, continued independently, went idle, woke on saved automated feedback, and persisted the correlated reply in its transcript. The adapter consumes the HTTP API, not the database or website; service/UI remain independent.
 
-This is opt-in and unreleased. The prepared Pi entry point uses our fresh-owned blocking and nonblocking question surface: flat input-area tabs, blocking priority, retained drafts, and group-local review. `ask_user_question_async` returns immediately while automatically presenting its private question; `/asks` reopens paused questions. Other producers of the same ordinary ask names must be excluded before loading it. Preparing the source does not activate a running seat or change global settings. Native prompts/replies are not published to Threadroom or its shared outline; `threadroom_ask` remains the deliberate longer-lived extra, not an ordinary-ask prerequisite. Authentication, evolving live presentations, FlightDeck, and an alternative terminal UI remain unfinished. `npm run pi:pack:check` inspects the standalone adapter distribution.
+This is opt-in and unreleased. The prepared Pi entry point uses our fresh-owned blocking and nonblocking question surface: flat input-area tabs, blocking priority, retained drafts, and group-local review. `ask_user_question_async` returns immediately with a stable identity; passing that identity to `ask_user_question` later waits on the same still-pending private question. `/asks` reopens paused questions. Other producers of the same ordinary ask names must be excluded before loading it. Preparing the source does not activate a running seat or change global settings. Native prompts/replies are not published to Threadroom or its shared outline; `threadroom_ask` remains the deliberate longer-lived extra, not an ordinary-ask prerequisite. Authentication, evolving live presentations, FlightDeck, and an alternative terminal UI remain unfinished. `npm run pi:pack:check` builds and inspects the standalone adapter distribution, including its local service runtime.
 
 ## Evidence
 
