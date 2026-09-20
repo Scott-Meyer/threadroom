@@ -128,20 +128,36 @@ test('active branch/session ownership and late UI callbacks do not cross switch,
   for (const boundary of ['session_before_switch', 'session_before_fork', 'session_before_tree', 'session_before_compact']) {
     const opening = f.open(question.details.id); await f.tick();
     const dialog = f.dialogs.at(-1);
-    f.idle = false; await f.emit(boundary);
+    await f.emit(boundary);
     dialog.resolve({ id: question.details.id, text: 'Late callback must not become feedback' });
     await opening;
     assert.equal(f.entries('threadroom.native.answer.v1').length, 0, boundary);
     assert.equal(f.deliveries.length, 0, boundary);
-    f.idle = true;
     if (boundary === 'session_before_compact') await f.emit('session_compact_failed');
-    else await f.emit('session_tree');
+    else if (boundary === 'session_before_tree') await f.emit('session_tree');
+    else { await f.emit('session_shutdown'); await f.emit('session_start'); }
   }
-  // Two canceled/failed navigation attempts must not leave a stale epoch timer
-  // owning the only retry. No successful session_tree event releases this gate.
-  f.idle = false; await f.emit('session_before_tree'); await f.emit('session_before_tree');
-  f.idle = true; await new Promise((done) => setTimeout(done, 150));
-  assert.equal((await f.ask('owned')).details.status, 'pending', 'quiescence releases the newest boundary');
+  // Stock Pi awaits later before-switch handlers while isIdle() remains true.
+  // Quiescence must not reopen either private producer during that interval, or
+  // after an unreported cancellation/failure. Only a lifecycle rebind recovers.
+  let releaseTransition; const heldTransition = new Promise((resolve) => { releaseTransition = resolve; });
+  f.extension.handlers.get('session_before_switch').push(() => heldTransition);
+  const changing = f.emit('session_before_switch'); await f.tick();
+  const dialogCount = f.dialogs.length;
+  await new Promise((done) => setTimeout(done, 150));
+  assert.equal((await f.ask('during-held-transition')).details.status, 'session_changing');
+  await f.open(question.details.id);
+  assert.equal(f.dialogs.length, dialogCount, '/asks cannot override an unknown in-flight transition');
+  assert.match(f.notices.at(-1)[0], /run \/reload/);
+  releaseTransition(); await changing;
+  await f.emit('session_before_compact'); await f.emit('session_compact_failed'); await f.emit('session_tree');
+  assert.equal((await f.ask('after-unreported-cancel')).details.status, 'session_changing', 'unrelated positive events cannot clear a replacement gate');
+  await f.emit('session_shutdown');
+  const beforeRetiredAttempt = f.manager.getEntries().length;
+  assert.equal((await f.ask('retired-native')).details.status, 'session_changing');
+  assert.equal(f.manager.getEntries().length, beforeRetiredAttempt, 'retired native producer cannot lazily resurrect itself');
+  await f.emit('session_start');
+  assert.equal((await f.ask('owned')).details.status, 'pending', 'authoritative lifecycle rebind restores admission');
   const afterCancelled = f.open(question.details.id); await f.tick();
   f.dialogs.at(-1).component.handleInput('\x1b'); await afterCancelled;
   // Same-session tree navigation projects only the actual selected branch.

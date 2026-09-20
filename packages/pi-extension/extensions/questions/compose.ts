@@ -69,10 +69,11 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
   const native = registerNativeAsks(pi, { presentation, waitToolName: 'ask_user_question' });
   registerBlockingQuestions(pi, async (group, ctx, signal) => {
     if (!supportsQuestionHost(ctx)) throw Object.assign(new Error('This Pi host does not expose inline widgets; no question was presented and no human declined.'), { code: 'unsupported_host' });
+    const accept = native.captureAdmission(ctx);
     const handle = ensure(ctx).enqueue(group), detach = () => handle.detach();
     if (signal?.aborted) detach(); else signal?.addEventListener('abort', detach, { once: true });
-    try { return await handle.outcome!; } finally { signal?.removeEventListener('abort', detach); }
-  }, native.waitForQuestion);
+    try { return { result: await handle.outcome!, accept }; } finally { signal?.removeEventListener('abort', detach); }
+  }, native.waitForQuestion, native.captureAdmission);
   pi.on('ui_prompt_start', () => { foreign = true; host?.suspend(true); });
   pi.on('ui_prompt_end', () => { foreign = false; host?.suspend(false); });
   return { snapshot: () => host?.snapshot(), dispose() { host?.dispose(); host = undefined; owner = undefined; } };

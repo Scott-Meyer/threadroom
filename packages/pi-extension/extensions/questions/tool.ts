@@ -4,10 +4,12 @@ import { Type } from 'typebox';
 import type { QuestionAnswer, QuestionGroup, QuestionResult } from './types.ts';
 import { renderBlockingAskCall, renderBlockingAskResult } from './stream.ts';
 
-/** TUI presentation owns interaction; rejection means no human cancellation result. */
+/** TUI presentation owns interaction; rejection means no human cancellation result.
+ * Composed hosts carry their originating native activation through final return. */
+export type QuestionPresentation = QuestionResult | Readonly<{ result: QuestionResult; accept: () => void }>;
 export type QuestionPresenter = (
   group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal,
-) => Promise<QuestionResult>;
+) => Promise<QuestionPresentation>;
 
 // These authoring limits belong to new blocking groups, not to a referenced
 // native question or the shared renderer.
@@ -154,21 +156,42 @@ export type ExistingQuestionWait = (questionId: string, ctx: ExtensionContext, s
   answerId?: string;
   status: 'answered' | 'cancelled' | 'already_queued' | 'already_received' | 'already_claimed';
   note?: string;
+  acceptWait?: () => void;
+  acceptClaim?: () => void;
   releaseClaim?: () => void;
   result: QuestionResult;
 }>>;
 
 /** Registers a private blocking producer; no network, durable store, or global settings changes. */
-export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPresenter, waitExisting?: ExistingQuestionWait): void {
+export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPresenter, waitExisting?: ExistingQuestionWait,
+  captureAdmission?: (ctx: ExtensionContext) => () => void): void {
   const active = new Set<AbortController>();
-  let retired = false;
-  pi.on('session_shutdown', () => {
-    retired = true;
-    for (const controller of active) controller.abort(failure('presentation_detached', 'Question presentation detached during session shutdown.'));
+  let retired = false, replacing = false, changingTree = false, compacting = false;
+  const transitioning = () => replacing || changingTree || compacting;
+  function detachActive(message: string) {
+    for (const controller of active) controller.abort(failure('presentation_detached', message));
     active.clear();
+  }
+  pi.on('session_shutdown', () => {
+    retired = true; replacing = true;
+    detachActive('Question presentation detached during session shutdown.');
   });
-  // Session-scoped admission reopens; outgoing controllers remain permanently aborted.
-  pi.on('session_start', () => { retired = false; });
+  for (const event of ['session_before_switch', 'session_before_fork'] as const) pi.on(event, () => {
+    replacing = true; detachActive('Question presentation detached during session transition.');
+  });
+  pi.on('session_before_tree', () => {
+    changingTree = true; detachActive('Question presentation detached during session transition.');
+  });
+  pi.on('session_before_compact', () => {
+    compacting = true; detachActive('Question presentation detached during session transition.');
+  });
+  // Only the matching positive lifecycle event reopens its gate. Stock Pi
+  // exposes no cancelled/failed replacement or tree event, so those attempts
+  // remain fail-closed until their positive event or a lifecycle rebind.
+  pi.on('session_start', () => { retired = false; replacing = changingTree = compacting = false; });
+  pi.on('session_tree', () => { changingTree = false; });
+  pi.on('session_compact', () => { compacting = false; });
+  pi.on('session_compact_failed', () => { compacting = false; });
   pi.registerTool({
     name: 'ask_user_question',
     label: 'Ask Questions',
@@ -181,6 +204,7 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
     renderResult: renderBlockingAskResult,
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       if (retired) throw failure('presentation_detached', 'Question producer belongs to a retired session.');
+      if (transitioning()) throw failure('presentation_detached', 'Private question admission is closed during an unresolved session transition.');
       const controller = new AbortController();
       const signals = [controller.signal, signal, ctx.signal].filter((value): value is AbortSignal => value !== undefined);
       const lifetime = AbortSignal.any(signals);
@@ -203,6 +227,10 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
             // before any answer-bearing tool result exists.
             waited = await waitExisting(params.questionId!, ctx, lifetime);
             lifetime.throwIfAborted();
+            // Every native outcome is activation-bound; answer-bearing outcomes
+            // additionally arbitrate the one delivery winner.
+            waited.acceptWait?.();
+            waited.acceptClaim?.();
             const text = waited.note ? JSON.stringify({ status: waited.status, questionId: waited.questionId, note: waited.note }) : resultText(waited.result);
             return { content: [{ type: 'text', text }], details: {
               groupId: `native:${waited.questionId}`, sessionId: waited.sessionId, questionId: waited.questionId,
@@ -211,6 +239,9 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
             } };
           } catch (error) { waited?.releaseClaim?.(); throw error; }
         }
+        // TUI composition returns its fence with the presenter outcome; SDK
+        // dialogs need it captured here before their first awaited interaction.
+        const acceptCompletion = ctx.mode === 'tui' ? undefined : captureAdmission?.(ctx);
         const group: QuestionGroup = Object.freeze({
           id: `blocking:${toolCallId}`, mode: 'blocking',
           questions: Object.freeze(params.questions!.map((spec, index) => Object.freeze({
@@ -218,8 +249,10 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
             options: Object.freeze(spec.options.map((option) => Object.freeze({ ...option }))),
           }))),
         });
-        const result = await abortable(() => ctx.mode === 'tui' ? present(group, ctx, lifetime) : dialogs(group, ctx, lifetime), lifetime);
+        const presented = await abortable(() => ctx.mode === 'tui' ? present(group, ctx, lifetime) : dialogs(group, ctx, lifetime), lifetime);
         lifetime.throwIfAborted();
+        const result = 'result' in presented ? presented.result : presented;
+        if ('result' in presented) presented.accept(); else acceptCompletion?.();
         return { content: [{ type: 'text', text: resultText(result) }], details: { groupId: group.id, ...result } };
       } finally {
         active.delete(controller);

@@ -31,7 +31,7 @@ async function fixture(t) {
   const emit = async (name, context = ctx) => { for (const handler of extension.handlers.get(name) ?? []) await handler({}, context); };
   t.after(() => emit('session_shutdown'));
   const ask = (id, questions, signal, context = ctx) => tool.execute(id, validate({ questions }), signal, undefined, context);
-  return { tool, validate, ctx, ask, emit };
+  return { extension, tool, validate, ctx, ask, emit };
 }
 
 // These are SDK-loader/controlled-dialog producer checks, not real TUI or human acceptance.
@@ -171,6 +171,40 @@ test('dialog abort never fabricates human cancellation; late failure is observed
   f.ctx.mode = 'tui';
   f.ctx.ui.testPresent = async () => { throw Object.assign(new Error('TEST presenter detached'), { code: 'presentation_detached' }); };
   await assert.rejects(f.ask('TEST-presenter-detached', [spec()]), { code: 'presentation_detached' });
+});
+
+test('a native wait cancellation settled just before a boundary cannot return from the old activation', options, async (t) => {
+  const f = await fixture(t); let waits = 0;
+  f.ctx.ui.testWait = async (questionId) => {
+    waits++; return { sessionId: 'TEST-session', questionId, status: 'cancelled',
+      result: { answers: [], cancelled: true } };
+  };
+  const outgoing = f.tool.execute('TEST_WAIT_CANCEL', f.validate({ questionId: 'ask-existing' }), undefined, undefined, f.ctx);
+  const transition = f.emit('session_before_fork');
+  await assert.rejects(outgoing, { code: 'presentation_detached' }); await transition;
+  assert.equal(waits, 1);
+});
+
+test('before-boundaries abort active SDK dialogs and gate new RPC admission until a positive lifecycle event', options, async (t) => {
+  const f = await fixture(t); let resolveDialog, dialogSignal, invocations = 0;
+  const rpc = { mode: 'rpc', hasUI: true, ui: { select(_title, _choices, opts) {
+    invocations++; dialogSignal = opts.signal; return new Promise((resolve) => { resolveDialog = resolve; });
+  } } };
+  await f.emit('session_start', rpc);
+  const outgoing = f.ask('TEST_RPC_TRANSITION', [spec()], undefined, rpc); await tick();
+  const outgoingRejected = assert.rejects(outgoing, { code: 'presentation_detached' });
+  let releaseTransition; const heldTransition = new Promise((resolve) => { releaseTransition = resolve; });
+  f.extension.handlers.get('session_before_switch').push(() => heldTransition);
+  const transition = f.emit('session_before_switch', rpc); await tick();
+  await outgoingRejected; assert.equal(dialogSignal.aborted, true);
+  await assert.rejects(f.ask('TEST_RPC_GATED', [spec()], undefined, rpc), { code: 'presentation_detached' });
+  assert.equal(invocations, 1, 'a gated request never opens another SDK dialog while a later before-handler is pending');
+  releaseTransition(); await transition; resolveDialog(undefined); await tick();
+  await f.emit('session_before_compact', rpc); await f.emit('session_compact_failed', rpc);
+  await assert.rejects(f.ask('TEST_RPC_STILL_GATED', [spec()], undefined, rpc), { code: 'presentation_detached' });
+  await f.emit('session_start', rpc);
+  script({ ...f, ctx: rpc }, [select('Cancel:')]);
+  assert.equal((await f.ask('TEST_RPC_REBOUND', [spec()], undefined, rpc)).details.cancelled, true);
 });
 
 test('same-registration session_start reopens TUI requests without reviving outgoing controllers or accepting late completion', options, async (t) => {

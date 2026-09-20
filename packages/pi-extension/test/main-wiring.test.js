@@ -18,5 +18,11 @@ test('actual package MAIN registers each owned private producer once while keepi
   assert.equal(proof.stockPromotionCancelPreservesQuestion, true);
   assert.equal(proof.stockAnswerBeforeWaitNoDuplicate, true);
   assert.equal(proof.stockSaveThenAbortRecoversFeedback, true);
+  assert.equal(proof.stockSettledHandoffBoundarySafe, true);
+  assert.equal(proof.stockFreshCompletionBoundarySafe, true);
+  assert.equal(proof.stockRpcCompletionBoundarySafe, true);
+  assert.equal(proof.stockImmediateWaitBoundarySafe, true);
+  assert.equal(proof.stockTransitionGatesBothProducers, true);
+  assert.equal(proof.stockUnknownTransitionStaysClosed, true);
   assert.equal(proof.stockOriginalEditorCaret, true);
 });

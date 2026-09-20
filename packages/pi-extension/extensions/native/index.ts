@@ -66,7 +66,9 @@ export type NativeQuestionWaitResult = Readonly<{
   answerId?: string;
   status: 'answered' | 'cancelled' | 'already_queued' | 'already_received' | 'already_claimed';
   note?: string;
-  /** Internal handoff rollback; never serialized into the tool result. */
+  /** Internal activation/handoff controls; never serialized into the tool result. */
+  acceptWait?: () => void;
+  acceptClaim?: () => void;
   releaseClaim?: () => void;
   result: QuestionResult;
 }>;
@@ -76,8 +78,10 @@ export type NativeQuestionWaiter = (questionId: string, context: ExtensionContex
 export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: NativeQuestionPresentation; waitToolName?: string } = {}) {
   let context: ExtensionContext | undefined;
   let epoch = 0;
-  let paused = false;
-  let navigating = false;
+  let retired = false;
+  let replacing = false;
+  let changingTree = false;
+  let compacting = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let reopenWhenIdle = false;
@@ -85,9 +89,11 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   const receiptJournal = createReceiptJournal();
   let source: NativeQuestionSource | undefined;
   let projectionError: string | undefined, displayError: string | undefined;
-  type Wait = { context: ExtensionContext; activation: number; signal: AbortSignal; abort: () => void; resolve: (value: NativeQuestionWaitResult) => void; reject: (error: unknown) => void };
+  type Wait = { context: ExtensionContext; activation: number; acceptWait: () => void; signal: AbortSignal; abort: () => void; resolve: (value: NativeQuestionWaitResult) => void; reject: (error: unknown) => void };
   const waits = new Map<string, Wait>();
   const blockingClaims = new Set<string>();
+  type Handoff = { context: ExtensionContext; activation: number; answerId: string; live: boolean };
+  const pendingHandoffs = new Set<Handoff>();
   function presentationAvailable(ctx: ExtensionContext) {
     if (!options.presentation?.canPresent) return true;
     try { return options.presentation.canPresent(ctx); } catch { return false; }
@@ -116,22 +122,33 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     if (!active(ctx, mine)) return;
     const wait = waits.get(questionId); if (!wait) return;
     waits.delete(questionId); wait.signal.removeEventListener('abort', wait.abort);
-    wait.resolve({ sessionId: ctx.sessionManager.getSessionId(), questionId, status: 'cancelled',
+    wait.resolve({ sessionId: ctx.sessionManager.getSessionId(), questionId, status: 'cancelled', acceptWait: wait.acceptWait,
       result: Object.freeze({ answers: Object.freeze([]), cancelled: true }) });
     ambient(ctx);
   }
   function claimAnswer(ctx: ExtensionContext, mine: number, answerId: string) {
-    blockingClaims.add(answerId); let live = true;
-    return () => {
-      if (!live) return; live = false;
-      if (blockingClaims.delete(answerId) && active(ctx, mine)) { ambient(ctx); flush(ctx); }
+    const handoff: Handoff = { context: ctx, activation: mine, answerId, live: true };
+    pendingHandoffs.add(handoff); blockingClaims.add(answerId);
+    const releaseClaim = () => {
+      if (!handoff.live) return; handoff.live = false; pendingHandoffs.delete(handoff);
+      if (blockingClaims.delete(answerId) && active(handoff.context, handoff.activation)) { ambient(handoff.context); flush(handoff.context); }
     };
+    const acceptClaim = () => {
+      if (!handoff.live || !pendingHandoffs.has(handoff) || !active(handoff.context, handoff.activation)) {
+        releaseClaim();
+        throw Object.assign(new Error('Private question answer handoff detached during session transition.'), { code: 'presentation_detached' });
+      }
+      // No await follows acceptance before the tool result is returned. Removing
+      // the capability here makes that synchronous return the delivery winner.
+      pendingHandoffs.delete(handoff);
+    };
+    return { acceptClaim, releaseClaim };
   }
   function settleWait(answer: Answer) {
     const wait = waits.get(answer.questionId); if (!wait) return;
     waits.delete(answer.questionId); wait.signal.removeEventListener('abort', wait.abort);
-    const releaseClaim = claimAnswer(wait.context, wait.activation, answer.answerId);
-    wait.resolve({ sessionId: answer.sessionId, questionId: answer.questionId, answerId: answer.answerId, status: 'answered', releaseClaim,
+    const claim = claimAnswer(wait.context, wait.activation, answer.answerId);
+    wait.resolve({ sessionId: answer.sessionId, questionId: answer.questionId, answerId: answer.answerId, status: 'answered', acceptWait: wait.acceptWait, ...claim,
       result: Object.freeze({ answers: Object.freeze([waitAnswer(answer)]), cancelled: false }) });
   }
   function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number }): NativeSavedAnswer {
@@ -184,7 +201,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     return context?.sessionManager === ctx.sessionManager;
   }
   function active(ctx: ExtensionContext, mine: number) {
-    return mine === epoch && sameSession(ctx) && !paused && !navigating;
+    return mine === epoch && sameSession(ctx) && !replacing && !changingTree && !compacting;
   }
   function ambient(ctx: ExtensionContext) {
     if (ctx.mode !== 'tui') return;
@@ -225,7 +242,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   function flush(ctx: ExtensionContext) {
     if (!active(ctx, epoch) || ctx.mode !== 'tui') return;
     // isIdle includes tree summarization/compaction, not only agent streaming.
-    if (!running && !ctx.isIdle()) { resumeAfterBoundary(ctx, epoch); return; }
+    if (!running && !ctx.isIdle()) { resumeWhenIdle(ctx, epoch); return; }
     const state = project(ctx);
     if (state.storageUnconfirmed) { ambient(ctx); return; }
     for (const answer of state.answers.values()) {
@@ -248,7 +265,8 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       waits.delete(id); wait.signal.removeEventListener('abort', wait.abort);
       wait.reject(Object.assign(new Error('Private question wait detached during session transition.'), { code: 'presentation_detached' }));
     }
-    blockingClaims.clear();
+    for (const handoff of pendingHandoffs) handoff.live = false;
+    pendingHandoffs.clear(); blockingClaims.clear();
     const oldSource = source; source = undefined;
     try { oldSource?.dispose(); } catch (error) { if (context) presentationFailed(context, error, 'projection'); }
     clearTimeout(timer); timer = undefined; reopenWhenIdle = false;
@@ -257,9 +275,20 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   }
   function bind(ctx: ExtensionContext) {
     invalidate();
-    context = ctx; paused = false; navigating = false; running = false;
+    context = ctx; replacing = changingTree = compacting = false; running = false;
     submitted = submissions(ctx.sessionManager, ctx.sessionManager.getSessionId());
     ambient(ctx); flush(ctx); void present(ctx);
+  }
+  function assertAdmission(ctx: ExtensionContext) {
+    if (retired) throw Object.assign(new Error('Private question producer belongs to a retired session.'), { code: 'presentation_detached' });
+    if (!context) bind(ctx);
+    if (!active(ctx, epoch)) throw Object.assign(new Error('Private question session is changing; retry only after the active session lifecycle resumes.'), { code: 'presentation_detached' });
+  }
+  function captureAdmission(ctx: ExtensionContext) {
+    assertAdmission(ctx); const mine = epoch;
+    return () => {
+      if (!active(ctx, mine)) throw Object.assign(new Error('Private question completion detached during session transition.'), { code: 'presentation_detached' });
+    };
   }
   const waitForQuestion: NativeQuestionWaiter = async (questionId, ctx, signal) => {
     const id = questionId.trim();
@@ -268,20 +297,19 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     if (ctx.mode !== 'tui' || !options.presentation || !presentationAvailable(ctx)) {
       throw Object.assign(new Error('Waiting on a private async question needs its interactive TUI presentation.'), { code: 'unsupported_host' });
     }
-    if (!context) bind(ctx);
-    if (!active(ctx, epoch)) throw Object.assign(new Error('Private question session is changing; retry in the active session.'), { code: 'presentation_detached' });
+    const acceptWait = captureAdmission(ctx);
     const state = project(ctx), answered = state.answers.get(id);
     if (state.storageUnconfirmed) throw storageFailure();
     if (answered) {
       const result = Object.freeze({ answers: Object.freeze([]), cancelled: false });
-      if (state.received.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id,
+      if (state.received.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_received', note: 'The answer was already delivered in this session branch.', result };
-      if (submitted.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id,
+      if (submitted.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_queued', note: 'The saved answer is already queued through the original async feedback path; no second delivery was created.', result };
-      if (blockingClaims.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id,
+      if (blockingClaims.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_claimed', note: 'Another blocking result already owns delivery of this saved answer.', result };
-      const releaseClaim = claimAnswer(ctx, epoch, answered.answerId);
-      return { sessionId: answered.sessionId, questionId: id, answerId: answered.answerId, status: 'answered', releaseClaim,
+      const claim = claimAnswer(ctx, epoch, answered.answerId);
+      return { sessionId: answered.sessionId, questionId: id, answerId: answered.answerId, status: 'answered', acceptWait, ...claim,
         result: Object.freeze({ answers: Object.freeze([waitAnswer(answered)]), cancelled: false }) };
     }
     if (!state.questions.has(id)) throw Object.assign(new Error('That private question does not belong to this session branch.'), { code: 'unknown_question' });
@@ -294,7 +322,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       reject(signal.reason ?? Object.assign(new Error('Private question wait aborted.'), { name: 'AbortError' }));
       if (active(ctx, epoch)) ambient(ctx);
     };
-    waits.set(id, { context: ctx, activation: epoch, signal, abort, resolve, reject });
+    waits.set(id, { context: ctx, activation: epoch, acceptWait, signal, abort, resolve, reject });
     signal.addEventListener('abort', abort, { once: true });
     ambient(ctx);
     if (!source || projectionError) {
@@ -303,38 +331,47 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     }
     return outcome;
   };
-  // Pi exposes no cancelled/failed tree or switch event. Resume only after host
-  // quiescence and reproject the actual selected branch, never an old UI snapshot.
-  function resumeAfterBoundary(ctx: ExtensionContext, mine: number, reopen = false) {
+  // Ordinary agent/compaction busy state can end without another extension
+  // event. This timer retries only work already admitted by an active epoch; it
+  // is never evidence that a session transition completed.
+  function resumeWhenIdle(ctx: ExtensionContext, mine: number, reopen = false) {
     reopenWhenIdle ||= reopen;
     if (timer) return;
     timer = setTimeout(() => {
       timer = undefined;
       if (mine !== epoch || !sameSession(ctx)) return;
-      if (!ctx.isIdle()) { resumeAfterBoundary(ctx, mine); return; }
+      if (!ctx.isIdle()) { resumeWhenIdle(ctx, mine); return; }
       const show = reopenWhenIdle; reopenWhenIdle = false;
-      paused = false; navigating = false; ambient(ctx); flush(ctx); if (show) void present(ctx);
+      ambient(ctx); flush(ctx); if (show) void present(ctx);
     }, 100);
     timer.unref?.();
   }
-  function boundary(ctx: ExtensionContext, kind: 'navigate' | 'compact') {
+  function boundary(ctx: ExtensionContext, kind: 'replace' | 'tree' | 'compact') {
     invalidate();
-    if (kind === 'compact') paused = true; else navigating = true;
-    resumeAfterBoundary(ctx, epoch, true);
+    if (kind === 'replace') replacing = true;
+    if (kind === 'tree') changingTree = true;
+    if (kind === 'compact') compacting = true;
+    try { ctx.ui.setStatus('native-asks', kind === 'compact'
+      ? 'Private asks paused for compaction'
+      : 'Private asks paused for session transition · reload after a cancelled transition'); } catch {}
   }
-  pi.on('session_start', (_event, ctx) => { bind(ctx); });
+  pi.on('session_start', (_event, ctx) => { retired = false; bind(ctx); });
   pi.on('session_shutdown', () => {
-    invalidate();
+    retired = true; invalidate();
     context?.ui.setStatus('native-asks', undefined); context = undefined;
   });
-  pi.on('session_before_switch', (_event, ctx) => { boundary(ctx, 'navigate'); });
-  pi.on('session_before_fork', (_event, ctx) => { boundary(ctx, 'navigate'); });
-  pi.on('session_before_tree', (_event, ctx) => { boundary(ctx, 'navigate'); });
-  pi.on('session_tree', (_event, ctx) => { bind(ctx); });
+  pi.on('session_before_switch', (_event, ctx) => { boundary(ctx, 'replace'); });
+  pi.on('session_before_fork', (_event, ctx) => { boundary(ctx, 'replace'); });
+  pi.on('session_before_tree', (_event, ctx) => { boundary(ctx, 'tree'); });
+  pi.on('session_tree', (_event, ctx) => {
+    changingTree = false; submitted = submissions(ctx.sessionManager, ctx.sessionManager.getSessionId());
+    if (active(ctx, epoch)) { ambient(ctx); flush(ctx); void present(ctx); }
+  });
   pi.on('session_before_compact', (_event, ctx) => { boundary(ctx, 'compact'); });
   for (const event of ['session_compact', 'session_compact_failed'] as const) {
     pi.on(event, (_event, ctx) => {
-      clearTimeout(timer); timer = undefined; paused = false; ambient(ctx); flush(ctx); void present(ctx);
+      clearTimeout(timer); timer = undefined; compacting = false;
+      if (active(ctx, epoch)) { ambient(ctx); flush(ctx); void present(ctx); }
     });
   }
   // Our inline widget does not start a blocking UI span. The host's outer
@@ -346,7 +383,9 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   });
   pi.on('agent_start', () => { running = true; });
   function releaseBlockingClaims(ctx: ExtensionContext) {
-    blockingClaims.clear(); ambient(ctx); flush(ctx);
+    for (const handoff of pendingHandoffs) handoff.live = false;
+    pendingHandoffs.clear(); blockingClaims.clear();
+    if (active(ctx, epoch)) { ambient(ctx); flush(ctx); }
   }
   pi.on('turn_end', (_event, ctx) => { if (sameSession(ctx)) releaseBlockingClaims(ctx); });
   pi.on('agent_settled', (_event, ctx) => {
@@ -379,6 +418,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       if (signal?.aborted) return result({ status: 'aborted', saved: false });
       if (!presentationAvailable(ctx)) return result({ status: 'unsupported_host', host: ctx.mode, saved: false,
         reason: 'This Pi host does not expose the private question presentation capability; no question was saved.' });
+      if (retired) return result({ status: 'session_changing', saved: false });
       if (!context) bind(ctx);
       if (!active(ctx, epoch)) return result({ status: 'session_changing', saved: false });
       if (!params.question.trim()) return result({ status: 'invalid_question', saved: false });
@@ -410,7 +450,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
 
   function present(ctx: ExtensionContext, initialId?: string, focus = false) {
     if (ctx.mode !== 'tui' || !active(ctx, epoch) || open) return;
-    if (!running && !ctx.isIdle()) { resumeAfterBoundary(ctx, epoch, true); return; }
+    if (!running && !ctx.isIdle()) { resumeWhenIdle(ctx, epoch, true); return; }
     const state = project(ctx);
     if (!state.pending.length) return;
     if (options.presentation) {
@@ -503,8 +543,14 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     description: 'Reopen this session’s pending private questions.',
     async handler(args, ctx) {
       if (ctx.mode !== 'tui') { ctx.ui.notify('Private asks require interactive Pi TUI.', 'warning'); return; }
+      if (retired) { ctx.ui.notify('Private asks belong to a retired session; retry after the active session starts.', 'info'); return; }
       if (!context) bind(ctx);
-      if (!active(ctx, epoch)) { ctx.ui.notify('Session is changing; reopen /asks when ready.', 'info'); return; }
+      if (!active(ctx, epoch)) {
+        ctx.ui.notify(compacting
+          ? 'Private asks are paused for compaction; retry after the host reports completion.'
+          : 'Private asks remain gated because Pi does not report a cancelled or failed session transition. After the transition command returns, run /reload and then /asks.', 'info');
+        return;
+      }
       const state = project(ctx);
       if (state.storageUnconfirmed) {
         ambient(ctx); ctx.ui.notify(plain(storageFailure()), 'error');
@@ -538,5 +584,5 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       present(ctx, initialId, true);
     },
   });
-  return { waitForQuestion };
+  return { waitForQuestion, captureAdmission };
 }

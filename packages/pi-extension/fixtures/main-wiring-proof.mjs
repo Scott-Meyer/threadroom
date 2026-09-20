@@ -100,4 +100,37 @@ await new Promise(done => setImmediate(done)); widget.handleInput('TEST_SAVED_BE
 await assert.rejects(interruptedWait); await new Promise(done => setImmediate(done));
 assert.equal(appends, 6, 'answer remains durably saved when the waiting tool aborts before its result');
 assert.equal(sends, 2, 'failed answer handoff releases its claim back to ordinary async feedback');
-console.log(JSON.stringify({ syntheticNotScott: true, humanAcceptance: false, realMainFactory: true, rawProducerRegistrationsExactlyOnce: true, sharedToolsRemainSeparate: true, printNotHumanCancel: true, olderSdkCapabilityBoundary: true, stockBlockingOnlyAsks: true, stockAsyncPersistence: true, stockPromotionIdentity: true, stockPromotionNoDuplicate: true, stockPromotionCancelPreservesQuestion: true, stockAnswerBeforeWaitNoDuplicate: true, stockSaveThenAbortRecoversFeedback: true, stockOriginalEditorCaret: true, registrations: names }, null, 2));
+
+const detached = await extension.tools.get('ask_user_question_async').definition.execute('stock-detached', { question: 'TEST settle then transition?' }, undefined, () => {}, stock);
+const detachedWait = extension.tools.get('ask_user_question').definition.execute('stock-detached-wait', { questionId: detached.details.id }, undefined, () => {}, stock);
+const detachedFresh = extension.tools.get('ask_user_question').definition.execute('stock-detached-fresh', { questions: [{ question: 'TEST fresh settle then transition?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, stock);
+let rpcStep = 0, resolveRpcSubmit;
+const rpc = { ...stock, mode: 'rpc', ui: { async select(_title, choices) {
+  rpcStep++;
+  if (rpcStep === 1) return choices.find(choice => choice.startsWith('[ ] 1.'));
+  if (rpcStep === 2) return choices.find(choice => choice.startsWith('Next:'));
+  return new Promise(resolve => { resolveRpcSubmit = () => resolve(choices.find(choice => choice.startsWith('Submit:'))); });
+} } };
+const detachedRpc = extension.tools.get('ask_user_question').definition.execute('stock-detached-rpc', { questions: [{ question: 'TEST RPC settle then transition?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, rpc);
+await new Promise(done => setImmediate(done)); assert.equal(typeof resolveRpcSubmit, 'function');
+widget.handleInput('TEST_FRESH_BEFORE_TRANSITION'); widget.handleInput('\r'); widget.handleInput('\r');
+widget.handleInput('TEST_SAVED_BEFORE_TRANSITION'); widget.handleInput('\r');
+resolveRpcSubmit();
+const detachedAlreadyQueued = extension.tools.get('ask_user_question').definition.execute('stock-detached-already', { questionId: cancellable.details.id }, undefined, () => {}, stock);
+// Match ExtensionRunner's sequential awaited dispatch: each synchronous handler
+// yields a microtask before the next one. The native activation fence must close
+// answer, fresh-group, and immediate non-answer outcomes before the later
+// blocking-controller handler runs.
+const detachedWaitRejected = assert.rejects(detachedWait, { code: 'presentation_detached' });
+const detachedFreshRejected = assert.rejects(detachedFresh, { code: 'presentation_detached' });
+const detachedRpcRejected = assert.rejects(detachedRpc, { code: 'presentation_detached' });
+const detachedAlreadyRejected = assert.rejects(detachedAlreadyQueued, { code: 'presentation_detached' });
+for (const handler of extension.handlers.get('session_before_switch') || []) await handler({}, stock);
+await detachedWaitRejected; await detachedFreshRejected; await detachedRpcRejected; await detachedAlreadyRejected;
+assert.equal(appends, 8, 'transition cannot erase the already saved native answer');
+assert.equal(sends, 2, 'detached handoff cannot return and enqueue the same answer');
+await assert.rejects(extension.tools.get('ask_user_question').definition.execute('blocked-new', { questions: [{ question: 'TEST blocked new?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, stock), { code: 'presentation_detached' });
+assert.equal((await extension.tools.get('ask_user_question_async').definition.execute('blocked-async', { question: 'TEST blocked async?' }, undefined, () => {}, stock)).details.status, 'session_changing');
+await extension.commands.get('asks').handler('', stock); assert.match(notices.at(-1), /run \/reload/);
+assert.equal(sends, 2, 'unknown transition outcome stays closed instead of guessing when to flush');
+console.log(JSON.stringify({ syntheticNotScott: true, humanAcceptance: false, realMainFactory: true, rawProducerRegistrationsExactlyOnce: true, sharedToolsRemainSeparate: true, printNotHumanCancel: true, olderSdkCapabilityBoundary: true, stockBlockingOnlyAsks: true, stockAsyncPersistence: true, stockPromotionIdentity: true, stockPromotionNoDuplicate: true, stockPromotionCancelPreservesQuestion: true, stockAnswerBeforeWaitNoDuplicate: true, stockSaveThenAbortRecoversFeedback: true, stockSettledHandoffBoundarySafe: true, stockFreshCompletionBoundarySafe: true, stockRpcCompletionBoundarySafe: true, stockImmediateWaitBoundarySafe: true, stockTransitionGatesBothProducers: true, stockUnknownTransitionStaysClosed: true, stockOriginalEditorCaret: true, registrations: names }, null, 2));
