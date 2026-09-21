@@ -34,13 +34,13 @@ export default function(pi: any) {
       const q = raw(renderNativeQuestion(question, { expanded: false }, theme)), a = raw(renderNativeAnswer(answer, { expanded: false }, theme));
       assert.ok(q.includes(theme.getFgAnsi('borderAccent'))); assert.ok(a.includes(theme.getFgAnsi('customMessageLabel')));
       assert.ok(!q.includes(theme.getFgAnsi('success')) && !a.includes(theme.getFgAnsi('success')));
-      for (const view of [q, a]) { assert.match(stripVTControlCharacters(view), /q:ask-TEST_ACTUAL_QUESTION_ID/); assert.match(stripVTControlCharacters(view), /PRIVATE/); assert.doesNotMatch(stripVTControlCharacters(view), /\b(saved|delivered|consumed|read|completed)\b/i); }
-      assert.match(stripVTControlCharacters(a), /TEST_HUMAN_REPLY/); assert.doesNotMatch(stripVTControlCharacters(q), /TEST_NATIVE_QUESTION_LAST/);
-      checks.push('Raw prebind question/reply captions remain neutral, retain distinct trusted theme roles and share only actual question identity.');
+      for (const view of [q, a]) { assert.doesNotMatch(stripVTControlCharacters(view), /q:ask-TEST_ACTUAL_QUESTION_ID|PRIVATE/); assert.doesNotMatch(stripVTControlCharacters(view), /\b(saved|delivered|consumed|read|completed)\b/i); }
+      assert.match(stripVTControlCharacters(a), /TEST_HUMAN_REPLY/); assert.match(stripVTControlCharacters(q), /TEST_NATIVE_QUESTION_LAST/);
+      checks.push('Compact question/reply cards show the human text without transport IDs; expanded cards retain actual identity under distinct trusted theme roles.');
       const expandedQ = text(renderNativeQuestion(question, { expanded: true }, theme)), expandedA = text(renderNativeAnswer(answer, { expanded: true }, theme));
-      for (const view of [expandedQ, expandedA]) for (const marker of ['TEST_NATIVE_QUESTION_LAST', 'TEST_CONTEXT_LAST', 'TEST_FIRST_PREVIEW', 'TEST_SELECTED_PREVIEW_LAST']) assert.ok(view.includes(marker), marker);
+      for (const view of [expandedQ, expandedA]) for (const marker of ['q:ask-TEST_ACTUAL_QUESTION_ID', 'TEST_NATIVE_QUESTION_LAST', 'TEST_CONTEXT_LAST', 'TEST_FIRST_PREVIEW', 'TEST_SELECTED_PREVIEW_LAST']) assert.ok(view.includes(marker), marker);
       assert.match(expandedA, /Original suggestion: 2/); assert.match(expandedA, /Answer identity:\nanswer-TEST_ACTUAL_ANSWER_ID/);
-      const compactContext = text(renderNativeFeedback(answer, { expanded: false }, theme)); assert.match(compactContext, /Reply context/); assert.match(compactContext, /q:ask-TEST_ACTUAL_QUESTION_ID/); assert.doesNotMatch(compactContext, /TEST_HUMAN_REPLY|TEST_NATIVE_TITLE/);
+      const compactContext = text(renderNativeFeedback(answer, { expanded: false }, theme)); assert.match(compactContext, /Reply context/); assert.doesNotMatch(compactContext, /q:|PRIVATE|TEST_HUMAN_REPLY|TEST_NATIVE_TITLE/);
       assert.match(text(renderNativeFeedback(answer, { expanded: true }, theme)), /TEST_SELECTED_PREVIEW_LAST/);
       assert.equal(JSON.stringify({ question, answer }), original, 'Rendering never changes the original stored fields');
       checks.push('Expanded original fields/duplicate suggestion index/full large previews are inspectable; compact context echo has no duplicate primary body or input mutation.');
@@ -52,7 +52,7 @@ export default function(pi: any) {
       const context: any = { args, toolCallId: 'TEST_BLOCKING_PUBLIC_CALL', expanded: false, isPartial: false, isError: false };
       const result = { content: [{ type: 'text', text: 'TEST_TRUNCATED_CONTENT_NOT_THE_ORIGINAL_DETAILS' }], details: { groupId: 'blocking:TEST_BLOCKING_PUBLIC_CALL', cancelled: false, answers: [{ questionIndex: 1, question: args.questions[1].question, selected: ['Same', 'Same'], optionIndices: [0, 1], previews: ['TEST_CHECKED_FIRST', null], answer: 'TEST_CUSTOM_REPLY', notes: 'TEST_OPEN_NOTES', wasCustom: true }] } };
       const compact = text(renderBlockingAskResult(result, { expanded: false, isPartial: false }, theme, context));
-      assert.match(compact, /Original question 2/); assert.match(compact, /TEST_BLOCKING_PUBLIC_CALL\/2/); assert.match(compact, /Some original questions unanswered/); assert.doesNotMatch(compact, /TRUNCATED_CONTENT/);
+      assert.match(compact, /TEST_ORIGINAL_TWO/); assert.match(compact, /TEST_CUSTOM_REPLY/); assert.match(compact, /Some original questions unanswered/); assert.doesNotMatch(compact, /TEST_BLOCKING_PUBLIC_CALL|TRUNCATED_CONTENT/);
       const expanded = text(renderBlockingAskResult(result, { expanded: true, isPartial: false }, theme, context));
       for (const marker of ['TEST_ORIGINAL_ONE', 'TEST_UNANSWERED_CONTEXT', 'TEST_ORIGINAL_TWO', 'TEST_CHECKED_FIRST', 'TEST_CUSTOM_REPLY', 'TEST_OPEN_NOTES', '(none authored)']) assert.ok(expanded.includes(marker), marker);
       assert.match(expanded, /Selected suggestion 1:\nSame/); assert.match(expanded, /Selected suggestion 2:\nSame/);
@@ -73,10 +73,11 @@ export default function(pi: any) {
       checks.push('Blocking summaries preserve original question/option positions, partial/cancel/error distinction, open notes and null-aligned previews; referenced async waits retain identity and truthful release copy.');
 
       for (const call of [renderAsyncAskCall(prompt, theme), renderBlockingAskCall(args, theme)]) assert.doesNotMatch(text(call), /call:|group:|q:/);
-      assert.match(text(renderAsyncAskCall(prompt, theme, { ...context, args: prompt })), /call:TEST_BLOCKING_PUBLIC_CALL/);
+      assert.match(text(renderAsyncAskCall(prompt, theme, { ...context, args: prompt })), /TEST_NATIVE_QUESTION_LAST/);
+      assert.match(text(renderAsyncAskCall(prompt, theme, { ...context, args: prompt, expanded: true })), /call:TEST_BLOCKING_PUBLIC_CALL/);
       const pending = { details: { id: question.id, status: 'pending' }, content: [] };
-      assert.match(text(renderAsyncAskResult(pending, { expanded: false, isPartial: false }, theme)), /q:ask-TEST_ACTUAL_QUESTION_ID/);
-      assert.doesNotMatch(text(renderAsyncAskResult(pending, { expanded: false, isPartial: false }, theme)), /Pending|saved|delivered/i);
+      const pendingCompact = text(renderAsyncAskResult(pending, { expanded: false, isPartial: false }, theme));
+      assert.match(pendingCompact, /Waiting for reply/); assert.doesNotMatch(pendingCompact, /q:|PRIVATE|saved|delivered/i);
       const storage = text(renderAsyncAskResult({ details: { status: 'storage_unconfirmed', error: 'TEST_STORAGE_DIAGNOSTIC', presentationError: 'TEST_PRESENTATION_DIAGNOSTIC' } }, { expanded: true, isPartial: false }, theme, context));
       assert.match(storage, /Storage unconfirmed/); assert.match(storage, /Storage diagnostic:\nTEST_STORAGE_DIAGNOSTIC/); assert.match(storage, /Presentation diagnostic:\nTEST_PRESENTATION_DIAGNOSTIC/);
       assert.match(text(renderAsyncAskResult({ details: { status: 'unsupported_host' } }, { expanded: false, isPartial: false }, theme)), /Not presented/);
@@ -89,16 +90,16 @@ export default function(pi: any) {
         { id: 'ask-TEST_BATCH_FAILED', status: 'storage_unconfirmed', error: 'TEST_BATCH_STORAGE_FAILURE' },
       ] }, content: [] };
       const batchCompact = text(renderPrivateAskResult(batch, { expanded: false, isPartial: false }, theme, batchContext));
-      assert.match(batchCompact, /q:ask-TEST_BATCH_SAVED/); assert.match(batchCompact, /q:ask-TEST_BATCH_FAILED/); assert.match(batchCompact, /Storage unconfirmed/);
+      assert.doesNotMatch(batchCompact, /q:ask-TEST_BATCH/); assert.match(batchCompact, /Question 1 · pending/); assert.match(batchCompact, /Storage unconfirmed/);
       const batchExpanded = text(renderPrivateAskResult(batch, { expanded: true, isPartial: false }, theme, batchContext));
-      assert.match(batchExpanded, /TEST_BATCH_STORAGE_FAILURE/); assert.match(batchExpanded, /TEST_BATCH_ONE/); assert.match(batchExpanded, /TEST batch failed/);
-      checks.push('Older hosts omit absent public call identity; request-time batch identities and storage/presentation diagnostics remain distinct from raw record/receipt authority.');
+      assert.match(batchExpanded, /q:ask-TEST_BATCH_SAVED/); assert.match(batchExpanded, /TEST_BATCH_STORAGE_FAILURE/); assert.match(batchExpanded, /TEST_BATCH_ONE/); assert.match(batchExpanded, /TEST batch failed/);
+      checks.push('Compact batch status stays readable without transport IDs; expanded request identities and storage/presentation diagnostics remain inspectable.');
 
       const tool = ctx.ui.testBlockingTool;
       assert.equal(tool.renderShell, 'self'); assert.equal(typeof tool.renderCall, 'function'); assert.equal(typeof tool.renderResult, 'function');
       const ui: any = { requestRender() {} }, actual = new ToolExecutionComponent(tool.name, context.toolCallId, args, {}, tool, ui, ctx.cwd || process.cwd());
       actual.setArgsComplete(); actual.markExecutionStarted(); actual.updateResult({ ...result, isError: false });
-      const actualRaw = raw(actual); assert.match(stripVTControlCharacters(actualRaw), /Original question 2/); assert.ok(!actualRaw.includes(theme.getBgAnsi('toolSuccessBg')), 'No automatic success shell overstates reply health');
+      const actualRaw = raw(actual); assert.match(stripVTControlCharacters(actualRaw), /TEST_ORIGINAL_TWO/); assert.match(stripVTControlCharacters(actualRaw), /TEST_CUSTOM_REPLY/); assert.doesNotMatch(stripVTControlCharacters(actualRaw), /TEST_BLOCKING_PUBLIC_CALL/); assert.ok(!actualRaw.includes(theme.getBgAnsi('toolSuccessBg')), 'No automatic success shell overstates reply health');
       actual.setExpanded(true); assert.match(text(actual), /TEST_UNANSWERED_CONTEXT/); assert.match(text(actual), /TEST_OPEN_NOTES/);
       const all = [renderNativeQuestion(question, { expanded: false }, theme), renderNativeAnswer(answer, { expanded: false }, theme), renderNativeFeedback(answer, { expanded: false }, theme), renderBlockingAskCall(args, theme, context), renderBlockingAskResult(result, { expanded: false, isPartial: false }, theme, context)];
       for (const width of [1, 4, 18, 40, 80]) for (const component of all) raw(component, width);

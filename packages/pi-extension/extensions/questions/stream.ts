@@ -20,6 +20,20 @@ function title(prompt: unknown): string {
   const data = record(prompt);
   return line(data.header) || field(data.question).split('\n').find(part => part.trim())?.trim() || '';
 }
+function authoredTitle(prompt: unknown): string { return line(record(prompt).header); }
+function preview(value: unknown, maxLines = 6, maxCharacters = 2000): string {
+  const text = field(value), lines = text.split('\n').map(part => part.trimEnd());
+  let shown = lines.slice(0, maxLines).join('\n'), clipped = lines.length > maxLines;
+  if (shown.length > maxCharacters) { shown = shown.slice(0, maxCharacters); clipped = true; }
+  return shown + (clipped ? '…' : '');
+}
+function compactPromptRows(prompts: unknown[]): Row[] {
+  if (prompts.length === 1) return preview(record(prompts[0]).question) ? [{ text: preview(record(prompts[0]).question) }] : [];
+  return prompts.flatMap((value, index) => {
+    const prompt = record(value), label = authoredTitle(prompt) || `Question ${index + 1}`;
+    return [{ text: label, color: 'dim' as const }, { text: preview(prompt.question) }];
+  });
+}
 // Escaped literal IDs retain actual identity even if an older host supplies controls.
 function identity(value: unknown): string {
   return typeof value === 'string' && value.length ? JSON.stringify(value).slice(1, -1)
@@ -41,6 +55,11 @@ function promptRows(value: unknown): Row[] {
     rows.push(...literal(`Suggestion ${index + 1}`, option.label), ...literal('Description', option.description), ...literal('Preview', option.preview));
   }
   return rows;
+}
+function compactReply(value: unknown): string {
+  const answer = record(value), selected = list(answer.selected).map(line).filter(Boolean).join(', ');
+  const custom = field(answer.answer) || field(answer.text), parts = [selected, custom].filter(Boolean);
+  return preview(parts.join(selected && custom ? '\n' : ''));
 }
 function nativeReplyRows(value: unknown): Row[] {
   const answer = record(value), rows = literal('Reply', answer.text);
@@ -94,9 +113,10 @@ export function renderNativeQuestion(data: unknown, options: StreamOptions, them
     ...literal('Question identity', identity(source.id) || undefined),
     ...literal('Source call', identity(source.toolCallId) || undefined),
     ...promptRows(prompt),
-  ] : [{ text: [list(prompt.options).length ? `${list(prompt.options).length} suggestions` : '',
-    typeof prompt.context === 'string' ? 'Context available' : ''].filter(Boolean).join(' · '), color: 'dim', compact: true }].filter(row => row.text) as Row[];
-  return card('question', 'Question', title(prompt), nativeMetadata(source, true), rows, theme);
+  ] : [...compactPromptRows([prompt]), ...([{ text: [list(prompt.options).length ? `${list(prompt.options).length} suggestions` : '',
+    typeof prompt.context === 'string' ? 'Context available' : ''].filter(Boolean).join(' · '), color: 'dim', compact: true }]
+    .filter(row => row.text) as Row[])];
+  return card('question', 'Question', authoredTitle(prompt), expanded ? nativeMetadata(source, true) : [], rows, theme);
 }
 
 /** Human reply record; does not claim persistence, consumption, or completion. */
@@ -106,8 +126,8 @@ export function renderNativeAnswer(data: unknown, options: StreamOptions, theme:
     ...literal('Question identity', identity(source.questionId) || undefined),
     ...literal('Answer identity', identity(source.answerId) || undefined),
     ...promptRows(source.prompt), ...nativeReplyRows(answer),
-  ] : [{ text: line(answer.text), compact: true }].filter(row => row.text);
-  return card('reply', 'Your reply', title(source.prompt), nativeMetadata(source, false), rows, theme);
+  ] : [{ text: compactReply(answer) }].filter(row => row.text);
+  return card('reply', 'Your reply', title(source.prompt), options?.expanded ? nativeMetadata(source, false) : [], rows, theme);
 }
 
 /** Context echo is intentionally compact, not another primary reply body.
@@ -119,15 +139,15 @@ export function renderNativeFeedback(details: unknown, options: StreamOptions, t
     ...literal('Answer identity', identity(source.answerId) || undefined),
     ...promptRows(source.prompt), ...nativeReplyRows(source.answer),
   ] : [];
-  return card('context', 'Reply context', '', nativeMetadata(source, false), rows, theme);
+  return card('context', 'Reply context', '', options?.expanded ? nativeMetadata(source, false) : [], rows, theme);
 }
 
 /** Public SDK call context supplies a call reference; absent older-host context
  * never causes a reference inferred from authored question text. */
 export function renderAsyncAskCall(args: unknown, theme: Theme, context?: ToolRenderContext): Component {
-  const prompt = record(args);
-  return card('question', 'Question request', title(prompt), ['PRIVATE', 'ASYNC', callReference(context)],
-    context?.expanded ? promptRows(prompt) : [], theme);
+  const prompt = record(args), expanded = !!context?.expanded;
+  return card('question', 'Question request', authoredTitle(prompt), expanded ? ['PRIVATE', 'ASYNC', callReference(context)] : [],
+    expanded ? promptRows(prompt) : compactPromptRows([prompt]), theme);
 }
 
 const failedRequests: Record<string, string> = {
@@ -143,13 +163,16 @@ export function renderAsyncAskResult(result: Result, options: ToolRenderResultOp
   const details = record(result.details), status = field(details.status), partial = options?.isPartial || context?.isPartial;
   const children = list(details.questions).map(record);
   const failed = Object.hasOwn(failedRequests, status) ? failedRequests[status] : undefined;
-  const error = context?.isError === true, metadata = ['PRIVATE', 'ASYNC', reference('q', details.id) || callReference(context)];
-  const heading = error ? 'Question request failed' : partial ? 'Question request update' : (status === 'pending' || status === 'answered' ? 'Question reference' : 'Question request result');
+  const error = context?.isError === true, expanded = !!options?.expanded;
+  const metadata = expanded ? ['PRIVATE', 'ASYNC', reference('q', details.id) || callReference(context)] : [];
+  const heading = error ? 'Question request failed' : partial ? 'Question request update'
+    : status === 'pending' ? 'Waiting for reply' : status === 'answered' ? 'Reply already saved' : 'Question request result';
   const rows: Row[] = [], content = contentText(result);
   if (failed) rows.push({ text: failed, color: status === 'storage_unconfirmed' ? 'warning' : 'error', compact: true });
   for (const [index, child] of children.entries()) {
     const childStatus = field(child.status), childFailure = failedRequests[childStatus];
-    rows.push({ text: `Question ${index + 1}${identity(child.id) ? ` · q:${identity(child.id)}` : ''} · ${childFailure || childStatus || 'unknown result'}`,
+    const childIdentity = expanded && identity(child.id) ? ` · q:${identity(child.id)}` : '';
+    rows.push({ text: `Question ${index + 1}${childIdentity} · ${childFailure || childStatus || 'unknown result'}`,
       color: childFailure ? childStatus === 'storage_unconfirmed' ? 'warning' : 'error' : 'dim', compact: true });
     if (childFailure || options?.expanded) rows.push(...literal('Reason', child.reason), ...literal('Storage diagnostic', child.error),
       ...literal('Presentation diagnostic', child.presentationError));
@@ -158,7 +181,7 @@ export function renderAsyncAskResult(result: Result, options: ToolRenderResultOp
     const diagnostic = content || field(details.error) || field(details.reason);
     if (diagnostic) rows.push({ text: diagnostic, color: error ? 'error' : 'text', compact: !options?.expanded });
   }
-  if (options?.expanded) {
+  if (expanded) {
     rows.push(...literal('Question identity', identity(details.id) || undefined), ...literal('Source call', identity(context?.toolCallId) || undefined));
     if (status) rows.push({ text: `Status reported by request: ${status}`, color: 'dim' });
     rows.push(...literal('Reason', details.reason), ...literal('Storage diagnostic', details.error), ...literal('Presentation diagnostic', details.presentationError));
@@ -175,24 +198,31 @@ export function renderBlockingAskCall(args: unknown, theme: Theme, context?: Too
   const input = record(args), requests = list(input.questions), first = record(requests[0]);
   const nestedQuestionId = requests.length === 1 ? identity(first.questionId) : '';
   const questionId = nestedQuestionId || (!requests.length ? identity(input.questionId) : ''), questions = questionId ? [] : requests;
+  const expanded = !!context?.expanded;
   const rows: Row[] = questionId
-    ? context?.expanded ? literal('Existing question identity', questionId) : []
-    : context?.expanded ? questions.flatMap((question, index) => [
+    ? expanded ? literal('Existing question identity', questionId) : []
+    : expanded ? questions.flatMap((question, index) => [
       { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
-    ]) : questions.length > 1 ? [{ text: `${questions.length} questions · waits for this group`, color: 'dim', compact: true }] : [];
-  return card('question', questionId ? 'Wait for existing question' : 'Question request', title(first),
-    ['PRIVATE', 'BLOCKING', questionId ? reference('q', questionId) : callReference(context)], rows, theme);
+    ]) : compactPromptRows(questions);
+  return card('question', questionId ? 'Wait for existing question' : 'Question request',
+    questionId ? '' : questions.length === 1 ? authoredTitle(first) : `${questions.length} questions`,
+    expanded ? ['PRIVATE', 'BLOCKING', questionId ? reference('q', questionId) : callReference(context)] : [], rows, theme);
 }
 function blockingAnswerRows(value: unknown, specs: unknown[], expanded: boolean, ref: string): Row[] {
   const answer = record(value), index = integer(answer.questionIndex) ? answer.questionIndex : undefined;
   const heading = index === undefined ? 'Question reply' : `Original question ${index + 1}`;
-  const rows: Row[] = [{ text: `${heading}${ref ? ` · ${ref}${index === undefined ? '' : `/${index + 1}`}` : ''}`, color: 'dim', compact: !expanded }];
   if (!expanded) {
-    const selected = list(answer.selected).map(line).filter(Boolean).join(', '), custom = line(answer.answer);
-    rows.push({ text: [selected, custom].filter(Boolean).join('; '), compact: true });
+    const rows: Row[] = [];
+    if (specs.length > 1) {
+      const spec = index === undefined ? undefined : specs[index];
+      rows.push({ text: authoredTitle(spec) || (index === undefined ? 'Reply' : `Question ${index + 1}`), color: 'dim' });
+    }
+    const reply = compactReply(answer);
+    if (reply) rows.push({ text: reply });
     if (typeof answer.notes === 'string') rows.push({ text: 'Notes available', color: 'dim', compact: true });
     return rows;
   }
+  const rows: Row[] = [{ text: `${heading}${ref ? ` · ${ref}${index === undefined ? '' : `/${index + 1}`}` : ''}`, color: 'dim' }];
   if (!specs.length) rows.push(...literal('Question', answer.question));
   rows.push(...literal('Reply', answer.answer));
   if (integer(answer.optionIndex)) rows.push({ text: `Original suggestion: ${answer.optionIndex + 1}`, color: 'dim' });
@@ -216,33 +246,36 @@ export function renderBlockingAskResult(result: Result, options: ToolRenderResul
   const referencedQuestionId = nestedQuestionId || (!requests.length ? identity(input.questionId) : '');
   const specs = referencedQuestionId ? [] : requests, answers = list(details.answers);
   const questionId = identity(details.questionId) || referencedQuestionId, existing = !!questionId;
-  const partial = options?.isPartial || context?.isPartial, error = context?.isError;
+  const partial = options?.isPartial || context?.isPartial, error = context?.isError, expanded = !!options?.expanded;
   const recognizedReply = typeof details.cancelled === 'boolean' || Array.isArray(details.answers);
   const heading = error ? 'Question request failed' : partial ? 'Reply update'
     : existing && details.cancelled === true ? 'Question wait cancelled'
-    : existing ? 'Question wait result'
-    : details.cancelled === true ? 'Questionnaire cancelled' : recognizedReply ? 'Your replies' : 'Question request result';
-  const metadata = ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || referencedQuestionId) : callReference(context) || reference('group', details.groupId)];
+    : existing && answers.length ? 'Your reply' : existing ? 'Question wait result'
+    : details.cancelled === true ? 'Questionnaire cancelled'
+    : recognizedReply ? answers.length === 1 ? 'Your reply' : 'Your replies' : 'Question request result';
+  const metadata = expanded
+    ? ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || referencedQuestionId) : callReference(context) || reference('group', details.groupId)]
+    : [];
   const rows: Row[] = [];
   if (existing) {
     if (details.cancelled === true) rows.push({ text: 'Wait cancelled · original nonblocking question remains pending', color: 'dim', compact: true });
     else if (typeof details.waitNote === 'string') rows.push({ text: field(details.waitNote), color: 'dim', compact: true });
-    else if (answers.length) rows.push({ text: 'Saved reply returned through this blocking wait', color: 'dim', compact: true });
-  } else if (typeof details.cancelled === 'boolean') {
+  } else if (typeof details.cancelled === 'boolean' && (details.cancelled || specs.length !== 1 || answers.length !== 1)) {
     rows.push({ text: `${answers.length} ${answers.length === 1 ? 'reply' : 'replies'}${specs.length ? ` / ${specs.length} original questions` : ''}${details.cancelled ? ' · partial replies retained' : ''}`, color: 'dim', compact: true });
     if (specs.length && answers.length < specs.length) rows.push({ text: 'Some original questions unanswered', color: 'dim', compact: true });
   }
-  if (options?.expanded) {
+  if (expanded) {
     rows.push(...literal(existing ? 'Existing question identity' : 'Group identity', existing ? questionId : identity(details.groupId) || undefined));
     if (existing && typeof details.waitStatus === 'string') rows.push({ text: `Wait status: ${field(details.waitStatus)}`, color: 'dim' });
     for (const [index, spec] of specs.entries()) rows.push({ text: `Original question ${index + 1}`, color: 'dim' }, ...promptRows(spec));
   }
-  for (const answer of answers) rows.push(...blockingAnswerRows(answer, specs, !!options?.expanded, metadata[2]));
+  for (const answer of answers) rows.push(...blockingAnswerRows(answer, specs, expanded, metadata[2] || ''));
   if (!answers.length && typeof details.cancelled !== 'boolean') {
     const text = contentText(result);
-    if (text) rows.push({ text, color: error ? 'error' : 'text', compact: !options?.expanded });
+    if (text) rows.push({ text, color: error ? 'error' : 'text', compact: !expanded });
   }
-  return card(error ? 'context' : 'reply', heading, '', metadata, rows, theme);
+  const resultTitle = !existing && specs.length === 1 ? authoredTitle(specs[0]) : '';
+  return card(error ? 'context' : 'reply', heading, resultTitle, metadata, rows, theme);
 }
 
 /** One public question tool has two execution modes. The authored schema stays
@@ -252,10 +285,11 @@ export function renderPrivateAskCall(args: unknown, theme: Theme, context?: Tool
   if (input.blocking !== false) return renderBlockingAskCall(args, theme, context);
   const questions = list(input.questions), first = record(questions[0]);
   if (questions.length === 1) return renderAsyncAskCall(first, theme, context);
-  return card('question', 'Question request', title(first), ['PRIVATE', 'ASYNC', callReference(context)],
-    context?.expanded ? questions.flatMap((question, index) => [
+  const expanded = !!context?.expanded;
+  return card('question', 'Question request', `${questions.length} questions`, expanded ? ['PRIVATE', 'ASYNC', callReference(context)] : [],
+    expanded ? questions.flatMap((question, index) => [
       { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
-    ]) : [{ text: `${questions.length} questions · continues without waiting`, color: 'dim', compact: true }], theme);
+    ]) : compactPromptRows(questions), theme);
 }
 
 export function renderPrivateAskResult(result: Result, options: ToolRenderResultOptions, theme: Theme, context?: ToolRenderContext): Component {
