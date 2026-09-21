@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Private native async asks and optional durable Threadroom discussions for Pi",
+  "description": "Private blocking or nonblocking questions and optional durable Threadroom discussions for Pi",
   "keywords": ["pi-package"],
   "files": ["extensions/", "src/", "README.md"],
   "engines": { "node": ">=24" },

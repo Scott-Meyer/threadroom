@@ -1,9 +1,36 @@
-import { Input, Editor, Text, Markdown, CURSOR_MARKER, getKeybindings, isKeyRelease, isKeyRepeat, matchesKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
+import { Editor, Text, Markdown, CURSOR_MARKER, getKeybindings, isKeyRelease, isKeyRepeat, matchesKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { getMarkdownTheme } from '@earendil-works/pi-coding-agent';
 import { QuestionModel, type QuestionState } from './model.ts';
-import { readable, replyText } from './text.ts';
+import { pastedReplyText, readable, replyText } from './text.ts';
 
-type DraftEditors = { input: Input; notes: Editor; custom: boolean; editingNotes: boolean; submittedNotes?: string; externalEditing?: boolean; editError?: string };
+function expandedText(editor: Editor): string {
+  return typeof (editor as any).getExpandedText === 'function' ? (editor as any).getExpandedText() : editor.getText();
+}
+function handleEditorInput(editor: Editor, data: string) {
+  const paste = /^\x1b\[200~([\s\S]*)\x1b\[201~$/u.exec(data);
+  editor.handleInput(paste ? `\x1b[200~${pastedReplyText(paste[1])}\x1b[201~` : data);
+}
+
+class ReplyEditor {
+  private editor: Editor;
+  constructor(tui: any, theme: any) {
+    this.editor = new Editor(tui, { borderColor: (text: string) => theme.fg('accent', text), selectList: {
+      selectedPrefix: (text: string) => theme.fg('accent', text), selectedText: (text: string) => theme.fg('accent', text),
+      description: (text: string) => theme.fg('dim', text), scrollInfo: (text: string) => theme.fg('dim', text),
+      noMatch: (text: string) => theme.fg('warning', text),
+    } }, getKeybindings());
+    this.editor.disableSubmit = true;
+  }
+  get focused() { return this.editor.focused; }
+  set focused(value: boolean) { this.editor.focused = value; }
+  getValue() { return expandedText(this.editor); }
+  setValue(value: string) { this.editor.setText(value); }
+  handleInput(data: string) { handleEditorInput(this.editor, data); }
+  render(width: number) { const rows = this.editor.render(width); return rows.slice(1, -1); }
+  invalidate() { this.editor.invalidate(); }
+}
+
+type DraftEditors = { input: ReplyEditor; notes: Editor; custom: boolean; editingNotes: boolean; submittedNotes?: string; externalEditing?: boolean; editError?: string };
 export type QuestionFrame = { header: string[]; lines: string[]; focus: [number, number]; footer: string };
 
 /** SDK components belong to stable question identity, never tab position.
@@ -42,13 +69,13 @@ export class QuestionView {
     for (const key of this.drafts.keys()) if (!live.has(key)) this.drafts.delete(key);
     let editors = this.drafts.get(draftKey);
     if (!editors) {
-      editors = { input: new Input({ prompt: '' }), notes: new Editor(this.tui, { borderColor: (text) => this.theme.fg('accent', text), selectList: { selectedPrefix: (text) => this.theme.fg('accent', text), selectedText: (text) => this.theme.fg('accent', text), description: (text) => this.theme.fg('dim', text), scrollInfo: (text) => this.theme.fg('dim', text), noMatch: (text) => this.theme.fg('warning', text) } }, getKeybindings()), custom: !current.question?.options?.length, editingNotes: false };
+      editors = { input: new ReplyEditor(this.tui, this.theme), notes: new Editor(this.tui, { borderColor: (text) => this.theme.fg('accent', text), selectList: { selectedPrefix: (text) => this.theme.fg('accent', text), selectedText: (text) => this.theme.fg('accent', text), description: (text) => this.theme.fg('dim', text), scrollInfo: (text) => this.theme.fg('dim', text), noMatch: (text) => this.theme.fg('warning', text) } }, getKeybindings()), custom: !current.question?.options?.length, editingNotes: false };
       const captured = editors;
       editors.notes.onSubmit = (text) => { captured.submittedNotes = readable(text); captured.editingNotes = false; this.tui.requestRender(); };
       this.drafts.set(draftKey, editors);
     }
     if (editors.input.getValue() !== current.reply) editors.input.setValue(current.reply || '');
-    if (editors.notes.getText() !== current.notes) editors.notes.setText(current.notes || '');
+    if (expandedText(editors.notes) !== current.notes) editors.notes.setText(current.notes || '');
     editors.custom = current.custom;
     editors.input.focused = this.focused && editors.custom && !editors.editingNotes;
     editors.notes.focused = this.focused && editors.editingNotes;
@@ -114,7 +141,7 @@ export class QuestionView {
       const detail = question.question + (question.context ? `\n\n${question.context}` : '') + (selected ? `\n\nSelected ${(current.option || 0) + 1}: ${selected.label}${selected.description ? `\n\n${selected.description}` : ''}${selected.preview !== undefined ? `\n\nPreview:\n${selected.preview}` : ''}` : '') + (current.reply ? `\n\nReply draft:\n${current.reply}` : '') + (current.error ? `\n\nSave diagnostic:\n${current.error}` : '') + (editors.editError ? `\n\nEditor diagnostic:\n${editors.editError}` : '');
       return { header, lines: wrap(detail), focus: [0, 1], footer };
     }
-    const lines = wrap(question.question), optionStart = lines.length;
+    const lines = [...wrap(question.question), ...(question.context ? wrap(question.context) : [])], optionStart = lines.length;
     let focus = optionStart, focusEnd = optionStart + 1;
     for (const [index, option] of options.entries()) {
       const pointer = index === current.option && !editors.custom ? '❯' : ' ';
@@ -127,7 +154,7 @@ export class QuestionView {
     const prefix = truncateToWidth(options.length ? `${selectedCustom ? '❯' : ' '} ${options.length + 1}. Reply: ` : 'Reply: ', Math.max(0, width - 1), '');
     const fieldWidth = Math.max(1, width - visibleWidth(prefix));
     const input = editors.input.focused ? editors.input.render(fieldWidth)
-      : [this.theme.fg(current.reply ? 'text' : 'dim', truncateToWidth(readable(current.reply || 'Write a reply…'), fieldWidth, ''))];
+      : new Text(this.theme.fg(current.reply ? 'text' : 'dim', readable(current.reply || 'Write a reply…')), 0, 0).render(fieldWidth);
     const start = lines.length;
     lines.push(...input.map((line, index) => (index ? ' '.repeat(visibleWidth(prefix)) : this.theme.fg(selectedCustom ? 'accent' : 'text', prefix)) + line));
     if (selectedCustom) { focus = start + this.caret(input, 0)[0]; focusEnd = focus + 1; }
@@ -136,9 +163,12 @@ export class QuestionView {
       const start = lines.length, notes = editors.notes.focused ? editors.notes.render(width) : wrap(current.notes || 'Write notes…');
       lines.push(...notes); focus = start + this.caret(notes, 0)[0]; focusEnd = focus + 1;
     } else if (current.notes) lines.push(...wrap(`Notes: ${current.notes}`));
-    if (selected?.preview !== undefined && !editors.editingNotes && !editors.custom) {
-      const preview = readable(selected.preview);
-      lines.push(...(question.plainPreview ? wrap(preview) : new Markdown(preview, 0, 0, getMarkdownTheme()).render(width)));
+    if (!editors.editingNotes && !editors.custom) {
+      if (selected?.description) lines.push(...wrap(selected.description));
+      if (selected?.preview !== undefined) {
+        const preview = readable(selected.preview);
+        lines.push(...(question.plainPreview ? wrap(preview) : new Markdown(preview, 0, 0, getMarkdownTheme()).render(width)));
+      }
     }
     return { header, lines, focus: [focus, focusEnd], footer };
   }
@@ -168,9 +198,9 @@ export class QuestionView {
     } else if (current.tab.mode === 'blocking' && current.question?.allowNotes !== false && matchesKey(data, 'alt+n')) {
       editors.editingNotes = !editors.editingNotes;
     } else if (editors.editingNotes) {
-      editors.notes.handleInput(data);
-      const raw = editors.submittedNotes ?? editors.notes.getText(), safe = readable(raw); editors.submittedNotes = undefined;
-      if (editors.notes.getText() !== safe) editors.notes.setText(safe);
+      handleEditorInput(editors.notes, data);
+      const raw = editors.submittedNotes ?? expandedText(editors.notes), safe = readable(raw); editors.submittedNotes = undefined;
+      if (expandedText(editors.notes) !== safe) editors.notes.setText(safe);
       this.model.setNotes(safe);
     } else if (kb.matches(data, 'tui.select.confirm') || kb.matches(data, 'tui.input.submit')) {
       if (!editors.custom && current.option === options.length) { editors.custom = true; this.model.useCustom(); }

@@ -56,10 +56,12 @@ function mountedEditor(tui: any, preferred: any, fallback?: any) {
   return editor(preferred) ? preferred : editor(fallback) ? fallback : [...mounted].find(editor);
 }
 
-type Prompt = { question: string; context?: string; options?: { label: string; preview?: string }[] };
+type Prompt = { question: string; header?: string; context?: string; options?: { label: string; description?: string; preview?: string }[]; multiSelect?: boolean };
+export type NativeQuestionRequest = Readonly<{ question: string; header?: string; context?: string; options?: readonly (string | Readonly<{ label: string; description?: string; preview?: string }>)[]; multiSelect?: boolean }>;
 type Question = { sessionId: string; id: string; toolCallId: string; prompt: Prompt };
 type Answer = { sessionId: string; answerId: string; questionId: string; prompt: Prompt;
-  answer: { text: string; optionIndex?: number; selection?: { label: string; preview?: string } } };
+  answer: { text: string; custom?: string; optionIndex?: number; selection?: { label: string; description?: string; preview?: string };
+    optionIndices?: number[]; selections?: { label: string; description?: string; preview?: string }[] } };
 export type NativeQuestionWaitResult = Readonly<{
   sessionId: string;
   questionId: string;
@@ -74,8 +76,14 @@ export type NativeQuestionWaitResult = Readonly<{
 }>;
 export type NativeQuestionWaiter = (questionId: string, context: ExtensionContext, signal: AbortSignal) => Promise<NativeQuestionWaitResult>;
 
-/** Native/private asks have no service dependency and do not claim the blocking ask name. */
-export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: NativeQuestionPresentation; waitToolName?: string } = {}) {
+/** Native/private asks have no service dependency. The standalone producer keeps its
+ * legacy name; composed question surfaces can expose the same capability through
+ * their single public tool instead. */
+export function registerNativeAsks(pi: ExtensionAPI, options: {
+  presentation?: NativeQuestionPresentation;
+  waitToolName?: string;
+  registerStandaloneTool?: boolean;
+} = {}) {
   let context: ExtensionContext | undefined;
   let epoch = 0;
   let retired = false;
@@ -113,6 +121,11 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     }
   }
   function waitAnswer(answer: Answer): QuestionAnswer {
+    if (answer.answer.optionIndices) return Object.freeze({ questionIndex: 0, question: answer.prompt.question,
+      selected: Object.freeze((answer.answer.selections || []).map((selection) => selection.label)),
+      optionIndices: Object.freeze([...answer.answer.optionIndices]),
+      previews: Object.freeze((answer.answer.selections || []).map((selection) => selection.preview ?? null)),
+      ...(answer.answer.custom ? { answer: answer.answer.custom } : {}), wasCustom: !!answer.answer.custom });
     return Object.freeze({ questionIndex: 0, question: answer.prompt.question, answer: answer.answer.text,
       ...(answer.answer.optionIndex !== undefined ? { optionIndex: answer.answer.optionIndex } : {}),
       ...(answer.answer.selection?.preview !== undefined ? { preview: answer.answer.selection.preview } : {}),
@@ -151,15 +164,24 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     wait.resolve({ sessionId: answer.sessionId, questionId: answer.questionId, answerId: answer.answerId, status: 'answered', acceptWait: wait.acceptWait, ...claim,
       result: Object.freeze({ answers: Object.freeze([waitAnswer(answer)]), cancelled: false }) });
   }
-  function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number }): NativeSavedAnswer {
+  function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[] }): NativeSavedAnswer {
     if (!active(ctx, mine)) throw new Error('Original private question activation is detached.');
     const state = project(ctx), question = state.questions.get(reply.questionId);
     if (!question || state.answers.has(reply.questionId)) throw new Error('Original question is not pending on this branch.');
     const selection = reply.optionIndex === undefined ? undefined : question.prompt.options?.[reply.optionIndex];
     if (reply.optionIndex !== undefined && (!Number.isInteger(reply.optionIndex) || !selection)) throw new Error('Invalid original option index.');
-    const text = plain(reply.text).replace(/\s+/gu, ' ').trim(); if (!text) throw new Error('Reply must not be empty.');
+    const optionIndices = reply.optionIndices ? [...reply.optionIndices] : undefined;
+    const selections = optionIndices?.map((index) => question.prompt.options?.[index]);
+    if (optionIndices && (new Set(optionIndices).size !== optionIndices.length || selections?.some((item) => !item))) {
+      throw new Error('Invalid original option indices.');
+    }
+    const custom = plain(reply.text);
+    const labels = (selections?.filter((item): item is NonNullable<typeof item> => !!item) || []).map((item) => item.label);
+    const text = [labels.join(', '), custom].filter(Boolean).join('; '); if (!text) throw new Error('Reply must not be empty.');
     const answer: Answer = { sessionId: state.sessionId, answerId: `answer-${randomUUID()}`, questionId: question.id, prompt: question.prompt,
-      answer: { text, ...(selection ? { optionIndex: reply.optionIndex, selection } : {}) } };
+      answer: { text, ...(selection ? { optionIndex: reply.optionIndex, selection } : {}),
+        ...(optionIndices ? { optionIndices, selections: selections as NonNullable<typeof selections> } : {}),
+        ...(optionIndices && custom ? { custom } : {}) } };
     append(ctx, ANSWER, answer);
     if (project(ctx).answers.get(question.id)?.answerId !== answer.answerId) throw new Error('Host did not save the answer entry.');
     // Reserve the exact saved answer before projection removes its tab or flush
@@ -295,7 +317,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     if (!id) throw Object.assign(new Error('A private question ID is required.'), { code: 'invalid_question_id' });
     signal.throwIfAborted();
     if (ctx.mode !== 'tui' || !options.presentation || !presentationAvailable(ctx)) {
-      throw Object.assign(new Error('Waiting on a private async question needs its interactive TUI presentation.'), { code: 'unsupported_host' });
+      throw Object.assign(new Error('Waiting on a private nonblocking question needs its interactive TUI presentation.'), { code: 'unsupported_host' });
     }
     const acceptWait = captureAdmission(ctx);
     const state = project(ctx), answered = state.answers.get(id);
@@ -305,7 +327,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       if (state.received.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_received', note: 'The answer was already delivered in this session branch.', result };
       if (submitted.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
-        answerId: answered.answerId, status: 'already_queued', note: 'The saved answer is already queued through the original async feedback path; no second delivery was created.', result };
+        answerId: answered.answerId, status: 'already_queued', note: 'The saved answer is already queued through the original nonblocking feedback path; no second delivery was created.', result };
       if (blockingClaims.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_claimed', note: 'Another blocking result already owns delivery of this saved answer.', result };
       const claim = claimAnswer(ctx, epoch, answered.answerId);
@@ -398,7 +420,43 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
   pi.registerMessageRenderer<Answer>(FEEDBACK, (message, options, theme) => renderNativeFeedback(message.details, options, theme));
 
   function result(value: any) { return { content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: value }; }
-  pi.registerTool({
+  async function askQuestion(toolCallId: string, params: NativeQuestionRequest, signal: AbortSignal | undefined, ctx: ExtensionContext) {
+    if (ctx.mode !== 'tui') return result({ status: 'unsupported_host', host: ctx.mode,
+      reason: 'Nonblocking private asks require interactive Pi TUI; no question was saved.' });
+    if (signal?.aborted) return result({ status: 'aborted', saved: false });
+    if (!presentationAvailable(ctx)) return result({ status: 'unsupported_host', host: ctx.mode, saved: false,
+      reason: 'This Pi host does not expose the private question presentation capability; no question was saved.' });
+    if (retired) return result({ status: 'session_changing', saved: false });
+    if (!context) bind(ctx);
+    if (!active(ctx, epoch)) return result({ status: 'session_changing', saved: false });
+    if (!params.question.trim()) return result({ status: 'invalid_question', saved: false });
+    const state = project(ctx);
+    const id = `ask-${createHash('sha256').update(`${state.sessionId}\0${toolCallId}`).digest('hex').slice(0, 24)}`;
+    const prompt: Prompt = { question: params.question,
+      ...(params.header !== undefined ? { header: params.header } : {}),
+      ...(params.context !== undefined ? { context: params.context } : {}),
+      ...(params.options !== undefined ? { options: params.options.map((option) =>
+        typeof option === 'string' ? { label: option } : { label: option.label,
+          ...(option.description !== undefined ? { description: option.description } : {}),
+          ...(option.preview !== undefined ? { preview: option.preview } : {}) }) } : {}),
+      ...(params.multiSelect !== undefined ? { multiSelect: params.multiSelect } : {}) };
+    const old = state.questions.get(id);
+    if (old && JSON.stringify(old.prompt) !== JSON.stringify(prompt)) return result({ status: 'identity_conflict', id, saved: false });
+    try {
+      if (state.storageUnconfirmed) throw storageFailure();
+      if (!old) append(ctx, QUESTION, { sessionId: state.sessionId, id, toolCallId, prompt });
+      const saved = project(ctx);
+      if (!saved.questions.has(id)) throw new Error('Host did not save the question entry.');
+    } catch (error) { return result({ status: (error as any)?.code === 'storage_unconfirmed' ? 'storage_unconfirmed' : 'save_failed', id, saved: false, error: plain(error) }); }
+    ambient(ctx); if (!old && !options.presentation) present(ctx, id);
+    const saved = project(ctx);
+    const status = saved.answers.has(id) ? 'answered' : 'pending';
+    return result({ id, sessionId: state.sessionId, status,
+      ...(status === 'pending' && options.waitToolName ? { waitWith: { tool: options.waitToolName, questionId: id, blocking: true } } : {}),
+      ...((projectionError || displayError) ? { presentationError: projectionError || displayError } : {}),
+      pending: saved.pending.map((question) => ({ id: question.id, question: question.prompt.question.slice(0, 160) })) });
+  }
+  if (options.registerStandaloneTool !== false) pi.registerTool({
     name: 'ask_user_question_async', label: 'Ask privately (async)',
     description: 'Ask one private native Pi question, then continue working. The question opens automatically in Pi’s input area while this tool returns a stable pending identity immediately. The person can select a suggestion or write freely; /asks reopens paused questions. Saved feedback steers this session or wakes it when idle. Interactive TUI only; questions remain local to this session/branch, not shared Threadroom.',
     parameters: Type.Object({
@@ -412,39 +470,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
     renderShell: 'self',
     renderCall: renderAsyncAskCall,
     renderResult: renderAsyncAskResult,
-    async execute(toolCallId, params, signal, _update, ctx) {
-      if (ctx.mode !== 'tui') return result({ status: 'unsupported_host', host: ctx.mode,
-        reason: 'Native async asks require interactive Pi TUI; no question was saved.' });
-      if (signal?.aborted) return result({ status: 'aborted', saved: false });
-      if (!presentationAvailable(ctx)) return result({ status: 'unsupported_host', host: ctx.mode, saved: false,
-        reason: 'This Pi host does not expose the private question presentation capability; no question was saved.' });
-      if (retired) return result({ status: 'session_changing', saved: false });
-      if (!context) bind(ctx);
-      if (!active(ctx, epoch)) return result({ status: 'session_changing', saved: false });
-      if (!params.question.trim()) return result({ status: 'invalid_question', saved: false });
-      const state = project(ctx);
-      const id = `ask-${createHash('sha256').update(`${state.sessionId}\0${toolCallId}`).digest('hex').slice(0, 24)}`;
-      const prompt: Prompt = { question: params.question,
-        ...(params.context !== undefined ? { context: params.context } : {}),
-        ...(params.options !== undefined ? { options: params.options.map((option: any) =>
-          typeof option === 'string' ? { label: option } : { label: option.label,
-            ...(option.preview !== undefined ? { preview: option.preview } : {}) }) } : {}) };
-      const old = state.questions.get(id);
-      if (old && JSON.stringify(old.prompt) !== JSON.stringify(prompt)) return result({ status: 'identity_conflict', id, saved: false });
-      try {
-        if (state.storageUnconfirmed) throw storageFailure();
-        if (!old) append(ctx, QUESTION, { sessionId: state.sessionId, id, toolCallId, prompt });
-        const saved = project(ctx);
-        if (!saved.questions.has(id)) throw new Error('Host did not save the question entry.');
-      } catch (error) { return result({ status: (error as any)?.code === 'storage_unconfirmed' ? 'storage_unconfirmed' : 'save_failed', id, saved: false, error: plain(error) }); }
-      ambient(ctx); if (!old && !options.presentation) present(ctx, id);
-      const saved = project(ctx);
-      const status = saved.answers.has(id) ? 'answered' : 'pending';
-      return result({ id, sessionId: state.sessionId, status,
-        ...(status === 'pending' && options.waitToolName ? { waitWith: { tool: options.waitToolName, questionId: id } } : {}),
-        ...((projectionError || displayError) ? { presentationError: projectionError || displayError } : {}),
-        pending: saved.pending.map((question) => ({ id: question.id, question: question.prompt.question.slice(0, 160) })) });
-    },
+    execute(toolCallId, params, signal, _update, ctx) { return askQuestion(toolCallId, params, signal, ctx); },
   });
 
 
@@ -584,5 +610,5 @@ export function registerNativeAsks(pi: ExtensionAPI, options: { presentation?: N
       present(ctx, initialId, true);
     },
   });
-  return { waitForQuestion, captureAdmission };
+  return { waitForQuestion, captureAdmission, askQuestion };
 }

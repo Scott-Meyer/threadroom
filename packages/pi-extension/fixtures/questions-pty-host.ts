@@ -45,7 +45,7 @@ export default function(pi: any) {
     log({ event: 'ready', nonce, sessionId: ctx.sessionManager.getSessionId(), registrations: pi.getAllTools().map((tool: any) => tool.name) });
   });
   pi.on('tool_execution_start', (event: any, ctx: any) => {
-    if (event.toolName === 'ask_user_question_async' && event.toolCallId === 'NATIVE_A') ctx.ui.setEditorText('KEEP_ORDINARY_EDITOR');
+    if (event.toolName === 'ask_user_question' && event.toolCallId === 'NATIVE_A') ctx.ui.setEditorText('KEEP_ORDINARY_EDITOR');
     log({ event: 'tool_start', name: event.toolName, id: event.toolCallId });
   });
   pi.on('tool_execution_end', (event: any) => log({ event: 'tool_end', name: event.toolName, id: event.toolCallId, result: event.result }));
@@ -67,9 +67,9 @@ export default function(pi: any) {
         const results = context.messages.filter((message: any) => message.role === 'toolResult');
         const feedback = context.messages.filter((message: any) => message.role === 'user' && JSON.stringify(message.content).includes('Saved private human feedback for native ask'));
         let content: any[], stopReason = 'toolUse';
-        if (!results.some((message: any) => message.toolName === 'ask_user_question_async')) content = [
-          { type: 'toolCall', id: 'NATIVE_A', name: 'ask_user_question_async', arguments: { question: 'TEST_ASYNC_A question?', options: ['Quiet', 'Bright'] } },
-          { type: 'toolCall', id: 'NATIVE_C', name: 'ask_user_question_async', arguments: { question: 'TEST_ASYNC_C backlog?', options: [{ label: '同じ' + '長い'.repeat(30), preview: 'FIRST_PREVIEW' }, { label: '同じ' + '長い'.repeat(30), preview: '**SECOND_LITERAL**\n' + Array.from({ length: 30 }, (_value, index) => `PREVIEW_${index}`).join('\n') }] } },
+        if (!results.some((message: any) => message.toolCallId === 'NATIVE_A')) content = [
+          { type: 'toolCall', id: 'NATIVE_A', name: 'ask_user_question', arguments: { blocking: false, questions: [{ question: 'TEST_ASYNC_A question?', options: [{ label: 'Quiet' }, { label: 'Bright' }] }] } },
+          { type: 'toolCall', id: 'NATIVE_C', name: 'ask_user_question', arguments: { blocking: false, questions: [{ question: 'TEST_ASYNC_C backlog?', options: [{ label: '同じ' + '長い'.repeat(25), preview: 'FIRST_PREVIEW' }, { label: '同じ' + '長い'.repeat(25), preview: '**SECOND_LITERAL**\n' + Array.from({ length: 30 }, (_value, index) => `PREVIEW_${index}`).join('\n') }] }] } },
         ];
         else if (!results.some((message: any) => message.toolName === 'question_test_work')) content = [{ type: 'toolCall', id: 'WORK', name: 'question_test_work', arguments: {} }];
         else if (!results.some((message: any) => message.toolCallId === 'BLOCK_B')) content = [{ type: 'toolCall', id: 'BLOCK_B', name: 'ask_user_question', arguments: { questions: [
@@ -78,7 +78,7 @@ export default function(pi: any) {
         ] } }];
         else if (!results.some((message: any) => message.toolCallId === 'PROMOTE_C')) {
           const pendingC = results.find((message: any) => message.toolCallId === 'NATIVE_C');
-          content = [{ type: 'toolCall', id: 'PROMOTE_C', name: 'ask_user_question', arguments: { questionId: pendingC.details.id } }];
+          content = [{ type: 'toolCall', id: 'PROMOTE_C', name: 'ask_user_question', arguments: { questionId: pendingC.details.id, blocking: true } }];
         }
         else if (feedback.length) { log({ event: 'provider_feedback', feedback }); content = [{ type: 'text', text: 'TEST_FEEDBACK_CONSUMED' }]; stopReason = 'stop'; }
         else { content = [{ type: 'text', text: 'TEST_AI_CONTINUED' }]; stopReason = 'stop'; }

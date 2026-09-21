@@ -1,6 +1,6 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 
-export type NativeQuestion = Readonly<{ sessionId: string; id: string; toolCallId: string; prompt: Readonly<{ question: string; context?: string; options?: readonly Readonly<{ label: string; preview?: string }>[] }> }>;
+export type NativeQuestion = Readonly<{ sessionId: string; id: string; toolCallId: string; prompt: Readonly<{ question: string; header?: string; context?: string; options?: readonly Readonly<{ label: string; description?: string; preview?: string }>[]; multiSelect?: boolean }> }>;
 export type NativeSavedAnswer = Readonly<{ sessionId: string; questionId: string; answerId: string }>;
 export interface NativeQuestionSource {
   /** Authoritative branch projection. Requiredness is a live wait lease, while
@@ -23,7 +23,7 @@ export interface NativeQuestionPresentation {
     sessionId: string;
     activation: number;
     /** Validates original activation/branch and acknowledges persistence only. */
-    commit(reply: { questionId: string; text: string; optionIndex?: number }): NativeSavedAnswer;
+    commit(reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[] }): NativeSavedAnswer;
     /** Releases only the live required wait; the saved async question remains. */
     cancelWait(questionId: string): void;
   }): NativeQuestionSource;

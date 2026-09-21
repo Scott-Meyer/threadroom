@@ -36,10 +36,11 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
             let handle = handles.get(question.id);
             if (!handle) {
               handle = captured.enqueue({ id: `native:${question.id}`, mode: 'async', questions: [{ id: question.id, question: question.prompt.question,
-                context: question.prompt.context, options: question.prompt.options, plainPreview: true, allowNotes: false }],
+                header: question.prompt.header, context: question.prompt.context, options: question.prompt.options,
+                multiSelect: question.prompt.multiSelect, plainPreview: true, allowNotes: false }],
                 commit(questionId, answer) {
                   if (!live) throw Object.assign(new Error('Private source detached.'), { code: 'presentation_detached' });
-                  binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex });
+                  binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex, optionIndices: answer.optionIndices });
                 },
                 releaseRequirement(questionId) {
                   if (!live) return;
@@ -66,14 +67,15 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
       };
     },
   };
-  const native = registerNativeAsks(pi, { presentation, waitToolName: 'ask_user_question' });
+  const native = registerNativeAsks(pi, { presentation, waitToolName: 'ask_user_question', registerStandaloneTool: false });
   registerBlockingQuestions(pi, async (group, ctx, signal) => {
     if (!supportsQuestionHost(ctx)) throw Object.assign(new Error('This Pi host does not expose inline widgets; no question was presented and no human declined.'), { code: 'unsupported_host' });
     const accept = native.captureAdmission(ctx);
     const handle = ensure(ctx).enqueue(group), detach = () => handle.detach();
     if (signal?.aborted) detach(); else signal?.addEventListener('abort', detach, { once: true });
     try { return { result: await handle.outcome!, accept }; } finally { signal?.removeEventListener('abort', detach); }
-  }, native.waitForQuestion, native.captureAdmission);
+  }, native.waitForQuestion, native.captureAdmission,
+  (toolCallId, question, ctx, signal) => native.askQuestion(toolCallId, question, signal, ctx));
   pi.on('ui_prompt_start', () => { foreign = true; host?.suspend(true); });
   pi.on('ui_prompt_end', () => { foreign = false; host?.suspend(false); });
   return { snapshot: () => host?.snapshot(), dispose() { host?.dispose(); host = undefined; owner = undefined; } };

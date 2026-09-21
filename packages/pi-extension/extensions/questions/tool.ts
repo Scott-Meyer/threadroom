@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { truncateHead } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { QuestionAnswer, QuestionGroup, QuestionResult } from './types.ts';
-import { renderBlockingAskCall, renderBlockingAskResult } from './stream.ts';
+import { renderPrivateAskCall, renderPrivateAskResult } from './stream.ts';
 
 /** TUI presentation owns interaction; rejection means no human cancellation result.
  * Composed hosts carry their originating native activation through final return. */
@@ -11,24 +11,27 @@ export type QuestionPresenter = (
   group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal,
 ) => Promise<QuestionPresentation>;
 
-// These authoring limits belong to new blocking groups, not to a referenced
-// native question or the shared renderer.
+// These authoring limits belong to new question groups, not to a referenced
+// pending question or the shared renderer.
 const authoredQuestions = Type.Array(Type.Object({
-  question: Type.String({ minLength: 1, description: 'The question to ask.' }),
+  question: Type.String({ minLength: 1, description: 'What the person is being asked.' }),
   header: Type.Optional(Type.String({ maxLength: 16, description: 'Short tab label.' })),
-  context: Type.Optional(Type.String({ description: 'Context useful when answering.' })),
+  context: Type.Optional(Type.String({ description: 'Supporting detail shown directly beneath the question, such as a command, path, or comparison background.' })),
   options: Type.Array(Type.Object({
     label: Type.String({ minLength: 1, maxLength: 60 }),
-    description: Type.Optional(Type.String()),
-    preview: Type.Optional(Type.String({ description: 'Content to compare when choosing this option.' })),
+    description: Type.Optional(Type.String({ description: 'A short explanation shown when this suggestion is selected.' })),
+    preview: Type.Optional(Type.String({ description: 'Additional content shown when this suggestion is selected.' })),
   }, { additionalProperties: false }), { minItems: 2, maxItems: 4 }),
   multiSelect: Type.Optional(Type.Boolean()),
 }, { additionalProperties: false }), { minItems: 1, maxItems: 4 });
 const parameters = Type.Object({
   questions: Type.Optional(authoredQuestions),
   questionId: Type.Optional(Type.String({ minLength: 1,
-    description: 'Stable pending ID returned by ask_user_question_async. Waits on that saved question without asking it again.' })),
-}, { additionalProperties: false, description: 'Provide either new questions or one existing async questionId, not both.' });
+    description: 'Stable pending ID returned by an earlier nonblocking call. Reuses that question instead of asking it again.' })),
+  blocking: Type.Optional(Type.Boolean({ default: true,
+    description: 'Wait for an answer before continuing. Defaults to true; set false to leave new questions pending while continuing.' })),
+}, { additionalProperties: false,
+  description: 'Provide either new questions or one existing questionId. blocking defaults to true.' });
 
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
@@ -150,6 +153,13 @@ async function dialogs(group: QuestionGroup, ctx: ExtensionContext, signal: Abor
   return { answers, cancelled: decision !== submit };
 }
 
+export type NonblockingQuestionProducer = (
+  toolCallId: string,
+  question: Readonly<{ question: string; header?: string; context?: string; options?: readonly Readonly<{ label: string; description?: string; preview?: string }>[]; multiSelect?: boolean }>,
+  ctx: ExtensionContext,
+  signal?: AbortSignal,
+) => Promise<Readonly<{ content: readonly unknown[]; details: Record<string, unknown> }>>;
+
 export type ExistingQuestionWait = (questionId: string, ctx: ExtensionContext, signal: AbortSignal) => Promise<Readonly<{
   sessionId: string;
   questionId: string;
@@ -162,9 +172,9 @@ export type ExistingQuestionWait = (questionId: string, ctx: ExtensionContext, s
   result: QuestionResult;
 }>>;
 
-/** Registers a private blocking producer; no network, durable store, or global settings changes. */
+/** Registers the private question tool; no network, service, or global settings changes. */
 export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPresenter, waitExisting?: ExistingQuestionWait,
-  captureAdmission?: (ctx: ExtensionContext) => () => void): void {
+  captureAdmission?: (ctx: ExtensionContext) => () => void, askNonblocking?: NonblockingQuestionProducer): void {
   const active = new Set<AbortController>();
   let retired = false, replacing = false, changingTree = false, compacting = false;
   const transitioning = () => replacing || changingTree || compacting;
@@ -195,13 +205,13 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
   pi.registerTool({
     name: 'ask_user_question',
     label: 'Ask Questions',
-    description: 'Ask 1–4 new private blocking questions, or pass questionId from ask_user_question_async to wait on that exact pending question without asking it again. New questions have 2–4 suggestions and support custom answers, notes, partial submission, and duplicate labels. A referenced async question keeps its original choices and saved identity. Result text is limited to 2000 lines/50KB; full answers remain in details.',
-    promptSnippet: 'Ask private questions when an answer is needed before continuing, or wait on an existing async question by ID',
-    promptGuidelines: ['Use ask_user_question for decisions needed to continue. ask_user_question_async returns a stable ID; pass it back as questionId when later work becomes blocked on that same pending question.'],
+    description: 'A private questionnaire for decisions and feedback. It ordinarily waits for the person’s answer. A nonblocking question stays open while useful work continues and can become required later without being asked twice. The person sees the question, its context, suggestions, and selected previews together. Supports 1–4 questions, 2–4 suggestions, custom replies, multiple selection, and partial submission. Result text is limited to 2000 lines/50KB; full answers remain in details.',
+    promptSnippet: 'Ask private questions; ordinarily waits, or can leave them pending while useful work continues',
+    promptGuidelines: ['Blocking is the ordinary question-and-answer experience. Nonblocking questions fit moments when useful work can continue while the person answers.'],
     parameters,
     renderShell: 'self',
-    renderCall: renderBlockingAskCall,
-    renderResult: renderBlockingAskResult,
+    renderCall: renderPrivateAskCall,
+    renderResult: renderPrivateAskResult,
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       if (retired) throw failure('presentation_detached', 'Question producer belongs to a retired session.');
       if (transitioning()) throw failure('presentation_detached', 'Private question admission is closed during an unresolved session transition.');
@@ -213,13 +223,38 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
         throw failure('unsupported_host', 'ask_user_question needs an interactive TUI or SDK dialog host; no question was presented and no human declined.');
       }
       const referencesExisting = typeof params.questionId === 'string';
+      const blocking = params.blocking !== false;
       if (referencesExisting === Array.isArray(params.questions)) {
         throw failure('invalid_arguments', 'Provide either questions or questionId, not both.');
       }
+      if (referencesExisting && !blocking) {
+        throw failure('invalid_arguments', 'questionId references an already pending question; use blocking=true to wait for it.');
+      }
+      if (!blocking && !askNonblocking) throw failure('unsupported_host', 'This question producer does not support nonblocking questions.');
       active.add(controller);
       try {
+        if (!blocking) {
+          const results = [];
+          for (const [index, spec] of params.questions!.entries()) {
+            results.push(await askNonblocking!(`${toolCallId}:${index}`, {
+              question: spec.question,
+              ...(spec.header !== undefined ? { header: spec.header } : {}),
+              ...(spec.context !== undefined ? { context: spec.context } : {}),
+              options: spec.options.map((option) => ({ label: option.label,
+                ...(option.description !== undefined ? { description: option.description } : {}),
+                ...(option.preview !== undefined ? { preview: option.preview } : {}) })),
+              ...(spec.multiSelect !== undefined ? { multiSelect: spec.multiSelect } : {}),
+            }, ctx, lifetime));
+            lifetime.throwIfAborted();
+          }
+          if (results.length === 1) return results[0];
+          const questions = results.map((item) => item.details);
+          const accepted = questions.every((item) => item.status === 'pending' || item.status === 'answered');
+          const value = { status: !accepted ? 'partial' : questions.every((item) => item.status === 'answered') ? 'answered' : 'pending', questions };
+          return { content: [{ type: 'text', text: JSON.stringify(value) }], details: value };
+        }
         if (referencesExisting) {
-          if (ctx.mode !== 'tui' || !waitExisting) throw failure('unsupported_host', 'Waiting on an existing private async question needs the interactive TUI host that owns it.');
+          if (ctx.mode !== 'tui' || !waitExisting) throw failure('unsupported_host', 'Waiting on an existing private nonblocking question needs the interactive TUI host that owns it.');
           let waited: Awaited<ReturnType<ExistingQuestionWait>> | undefined;
           try {
             // The native wait already owns lifetime cancellation. Keeping its
@@ -231,7 +266,12 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
             // additionally arbitrate the one delivery winner.
             waited.acceptWait?.();
             waited.acceptClaim?.();
-            const text = waited.note ? JSON.stringify({ status: waited.status, questionId: waited.questionId, note: waited.note }) : resultText(waited.result);
+            const text = waited.note
+              ? JSON.stringify({ status: waited.status, questionId: waited.questionId, note: waited.note })
+              : waited.status === 'cancelled'
+                ? JSON.stringify({ status: waited.status, questionId: waited.questionId, ...waited.result,
+                    note: 'Blocking wait cancelled. The original nonblocking question remains pending.' })
+                : resultText(waited.result);
             return { content: [{ type: 'text', text }], details: {
               groupId: `native:${waited.questionId}`, sessionId: waited.sessionId, questionId: waited.questionId,
               waitStatus: waited.status, ...(waited.note ? { waitNote: waited.note } : {}),

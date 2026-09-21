@@ -5,7 +5,7 @@ import { ToolExecutionComponent } from '@earendil-works/pi-coding-agent';
 import { visibleWidth, CURSOR_MARKER } from '@earendil-works/pi-tui';
 import { registerBlockingQuestions } from '../extensions/questions/tool.ts';
 import { registerNativeAsks } from '../extensions/native/index.ts';
-import { renderNativeQuestion, renderNativeAnswer, renderNativeFeedback, renderAsyncAskCall, renderAsyncAskResult, renderBlockingAskCall, renderBlockingAskResult } from '../extensions/questions/stream.ts';
+import { renderNativeQuestion, renderNativeAnswer, renderNativeFeedback, renderAsyncAskCall, renderAsyncAskResult, renderBlockingAskCall, renderBlockingAskResult, renderPrivateAskResult } from '../extensions/questions/stream.ts';
 
 // TEST-only authored records and actual SDK renderer boundary; no human content or persistence authority.
 export default function(pi: any) {
@@ -16,11 +16,17 @@ export default function(pi: any) {
       const theme = ctx.ui.theme, checks: string[] = [];
       const raw = (component: any, width = 80) => {
         const lines = component.render(width); for (const line of lines) { assert.doesNotMatch(line, /[\n\r]/, 'One Component row is one physical terminal line'); assert.ok(visibleWidth(line) <= width, `Stream exceeds width ${width}`); }
-        const result = lines.join('\n'); assert.doesNotMatch(result, /\x1b\](?:52|8);/); assert.doesNotMatch(result, /\x1b\[7m/); assert.ok(!result.includes(CURSOR_MARKER)); return result;
+        const result = lines.join('\n');
+        assert.doesNotMatch(result, /\x1b\](?:52|8);/);
+        assert.doesNotMatch(result, /\x1b\[7m/);
+        assert.ok(!result.includes('\x1b[31m'), 'authored color controls are removed before trusted theme styling');
+        assert.ok(!result.includes('\x1b_pi:c\x07'), 'authored APC controls are removed before rendering');
+        assert.doesNotMatch(result, /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u, 'authored bidi controls are removed before rendering');
+        assert.ok(!result.includes(CURSOR_MARKER)); return result;
       };
       const text = (component: any, width = 80) => stripVTControlCharacters(raw(component, width)).split('\n').map(row => row.trimEnd()).join('\n');
       const originalPreview = 'TEST_SELECTED_PREVIEW_FIRST\n' + 'x'.repeat(54000) + '\nTEST_SELECTED_PREVIEW_LAST';
-      const prompt = { question: 'TEST_NATIVE_TITLE\nTEST_NATIVE_QUESTION_LAST\x1b[31m\x1b]52;c;TEST_FORBIDDEN\x07\x1b_pi:c\x07\u202e', context: 'TEST_CONTEXT_FIRST\nTEST_CONTEXT_LAST', options: [{ label: 'Same', preview: 'TEST_FIRST_PREVIEW' }, { label: 'Same', preview: originalPreview }] };
+      const prompt = { question: 'TEST_NATIVE_TITLE\nTEST_NATIVE_QUESTION_LAST\x1b[31m\x1b]52;c;TEST_FORBIDDEN\x07\x1b_pi:c\x07\u061c\u200e\u200f\u202e', context: 'TEST_CONTEXT_FIRST\nTEST_CONTEXT_LAST', options: [{ label: 'Same', preview: 'TEST_FIRST_PREVIEW' }, { label: 'Same', preview: originalPreview }] };
       const question = { id: 'ask-TEST_ACTUAL_QUESTION_ID', sessionId: 'TEST_SESSION', toolCallId: 'TEST_ACTUAL_CALL_ID', prompt };
       const answer = { sessionId: question.sessionId, questionId: question.id, answerId: 'answer-TEST_ACTUAL_ANSWER_ID', prompt,
         answer: { text: 'TEST_HUMAN_REPLY\x1b[7m\x1b[0m\x1b]8;;https://invalid.example\x07', optionIndex: 1, selection: prompt.options[1] } };
@@ -60,7 +66,7 @@ export default function(pi: any) {
       const releasedWait = { content: [{ type: 'text', text: '{"cancelled":true}' }], details: { groupId: `native:${question.id}`, questionId: question.id,
         sessionId: question.sessionId, waitStatus: 'cancelled', cancelled: true, answers: [] } };
       const releasedText = text(renderBlockingAskResult(releasedWait, { expanded: false, isPartial: false }, theme, referenceContext));
-      assert.match(releasedText, /Question wait cancelled/); assert.match(releasedText, /original async question remains pending/); assert.doesNotMatch(releasedText, /Questionnaire cancelled/);
+      assert.match(releasedText, /Question wait cancelled/); assert.match(releasedText, /original nonblocking question remains pending/); assert.doesNotMatch(releasedText, /Questionnaire cancelled/);
       checks.push('Blocking summaries preserve original question/option positions, partial/cancel/error distinction, open notes and null-aligned previews; referenced async waits retain identity and truthful release copy.');
 
       for (const call of [renderAsyncAskCall(prompt, theme), renderBlockingAskCall(args, theme)]) assert.doesNotMatch(text(call), /call:|group:|q:/);
@@ -71,7 +77,19 @@ export default function(pi: any) {
       const storage = text(renderAsyncAskResult({ details: { status: 'storage_unconfirmed', error: 'TEST_STORAGE_DIAGNOSTIC', presentationError: 'TEST_PRESENTATION_DIAGNOSTIC' } }, { expanded: true, isPartial: false }, theme, context));
       assert.match(storage, /Storage unconfirmed/); assert.match(storage, /Storage diagnostic:\nTEST_STORAGE_DIAGNOSTIC/); assert.match(storage, /Presentation diagnostic:\nTEST_PRESENTATION_DIAGNOSTIC/);
       assert.match(text(renderAsyncAskResult({ details: { status: 'unsupported_host' } }, { expanded: false, isPartial: false }, theme)), /Not presented/);
-      checks.push('Older hosts omit absent public call identity; request-time status and storage/presentation diagnostics remain distinct from raw record/receipt authority.');
+      const batchContext: any = { ...context, args: { blocking: false, questions: [
+        { header: 'TEST_BATCH_ONE', question: 'TEST batch saved?', options: [{ label: 'One' }, { label: 'Two' }] },
+        { header: 'TEST_BATCH_TWO', question: 'TEST batch failed?', options: [{ label: 'One' }, { label: 'Two' }] },
+      ] } };
+      const batch = { details: { status: 'partial', questions: [
+        { id: 'ask-TEST_BATCH_SAVED', status: 'pending' },
+        { id: 'ask-TEST_BATCH_FAILED', status: 'storage_unconfirmed', error: 'TEST_BATCH_STORAGE_FAILURE' },
+      ] }, content: [] };
+      const batchCompact = text(renderPrivateAskResult(batch, { expanded: false, isPartial: false }, theme, batchContext));
+      assert.match(batchCompact, /q:ask-TEST_BATCH_SAVED/); assert.match(batchCompact, /q:ask-TEST_BATCH_FAILED/); assert.match(batchCompact, /Storage unconfirmed/);
+      const batchExpanded = text(renderPrivateAskResult(batch, { expanded: true, isPartial: false }, theme, batchContext));
+      assert.match(batchExpanded, /TEST_BATCH_STORAGE_FAILURE/); assert.match(batchExpanded, /TEST_BATCH_ONE/); assert.match(batchExpanded, /TEST batch failed/);
+      checks.push('Older hosts omit absent public call identity; request-time batch identities and storage/presentation diagnostics remain distinct from raw record/receipt authority.');
 
       const tool = ctx.ui.testBlockingTool;
       assert.equal(tool.renderShell, 'self'); assert.equal(typeof tool.renderCall, 'function'); assert.equal(typeof tool.renderResult, 'function');

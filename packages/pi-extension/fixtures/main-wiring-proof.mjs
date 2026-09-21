@@ -10,19 +10,24 @@ const loaded = await loadExtensions([resolve(root, 'packages/pi-extension/fixtur
 assert.deepEqual(loaded.errors, []);
 const extension = loaded.extensions[0], names = globalThis[Symbol.for('threadroom.test.main-registration')];
 assert.equal(extension.commands.has('threadroom-config'), false, 'Threadroom configuration belongs to the /threadroom menu');
-for (const name of ['ask_user_question', 'ask_user_question_async', 'threadroom_ask', 'threadroom']) {
+for (const name of ['ask_user_question', 'threadroom_ask', 'threadroom']) {
   assert.equal(names.filter((registered) => registered === name).length, 1, `Real MAIN must register ${name} exactly once`);
   assert.ok(extension.tools.has(name));
 }
+assert.equal(extension.tools.has('ask_user_question_async'), false, 'models see one ordinary question tool, not a competing async producer');
+const privateAsk = extension.tools.get('ask_user_question').definition;
+assert.equal(privateAsk.parameters.properties.blocking.default, true, 'omitting blocking preserves the familiar waiting behavior');
+assert.match(privateAsk.parameters.properties.blocking.description, /Defaults to true/);
+const nonblocking = (id, question, context, signal) => privateAsk.execute(id, { blocking: false, questions: [{ question,
+  options: [{ label: 'Answer now' }, { label: 'Answer later' }] }] }, signal, () => {}, context);
 let appends = 0, sends = 0;
 loaded.runtime.appendEntry = () => { appends++; }; loaded.runtime.sendMessage = () => { sends++; };
 const ctx = { mode: 'print', hasUI: false, ui: {} };
 await assert.rejects(() => extension.tools.get('ask_user_question').definition.execute('print-test', { questions: [{ question: 'TEST MAIN prompt?', options: [{ label: 'One', description: 'TEST first' }, { label: 'Two', description: 'TEST second' }] }] }, undefined, () => {}, ctx), { code: 'unsupported_host' }, 'unsupported print must not fabricate a human cancellation result');
-const async = await extension.tools.get('ask_user_question_async').definition.execute('print-async', { question: 'TEST MAIN async prompt?' }, undefined, () => {}, ctx);
-assert.equal(async.details.status, 'unsupported_host'); assert.notEqual(async.details.saved, true);
+await assert.rejects(() => nonblocking('print-async', 'TEST MAIN async prompt?', ctx), { code: 'unsupported_host' });
 const olderTui = { mode: 'tui', hasUI: true, ui: {} };
 await assert.rejects(() => extension.tools.get('ask_user_question').definition.execute('older-tui-blocking', { questions: [{ question: 'TEST older SDK prompt?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, olderTui), { code: 'unsupported_host' }, 'missing widgets must reject before blocking enqueue/wait');
-const olderAsync = await extension.tools.get('ask_user_question_async').definition.execute('older-tui-async', { question: 'TEST older SDK async prompt?' }, undefined, () => {}, olderTui);
+const olderAsync = await nonblocking('older-tui-async', 'TEST older SDK async prompt?', olderTui);
 assert.equal(olderAsync.details.status, 'unsupported_host'); assert.equal(olderAsync.details.saved, false);
 assert.equal(appends, 0, 'unsupported hosts cannot create question rows'); assert.equal(sends, 0);
 // Stock public UI port: no getCoreEditor and deliberately no raw terminal hook.
@@ -50,7 +55,7 @@ loaded.runtime.appendEntry = (type, data) => { appends++; manager.appendCustomEn
 let activeTools = [...extension.tools.keys()];
 loaded.runtime.getActiveTools = () => [...activeTools]; loaded.runtime.setActiveTools = (names) => { activeTools = [...names]; };
 for (const handler of extension.handlers.get('session_start') || []) await handler({}, stock);
-assert.deepEqual(activeTools.sort(), ['ask_user_question', 'ask_user_question_async'], 'shared tools are inactive by default');
+assert.deepEqual(activeTools.sort(), ['ask_user_question'], 'shared tools are inactive by default');
 const configPath = resolve(process.env.PI_CODING_AGENT_DIR, 'threadroom.json');
 await extension.commands.get('threadroom').handler('project on', stock);
 assert.match(notices.at(-1), /trusted project/, 'older contexts cannot grant project overrides');
@@ -74,19 +79,19 @@ assert.equal(notices.length, 0, 'blocking-only /asks must not report no pending 
 abort.abort(); await blockerOutcome; await new Promise(done => setImmediate(done));
 assert.equal(tui.getFocusedComponent(), input); input.handleInput('X');
 assert.equal(input.getText(), 'TEST_STOCK_DRAFXT', 'activation and cancellation retain original SDK Editor caret');
-const pending = await extension.tools.get('ask_user_question_async').definition.execute('stock-async', { question: 'TEST stock async?' }, undefined, () => {}, stock);
+const pending = await nonblocking('stock-async', 'TEST stock async?', stock);
 assert.equal(pending.details.status, 'pending'); assert.equal(appends, 1, 'stock SDK async is admitted and saved');
-assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questionId: pending.details.id });
+assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questionId: pending.details.id, blocking: true });
 assert.equal(tui.getFocusedComponent(), input, 'stock async arrival remains passive');
-const promoted = extension.tools.get('ask_user_question').definition.execute('stock-promoted', { questionId: pending.details.id }, undefined, () => {}, stock);
+const promoted = privateAsk.execute('stock-promoted', { questionId: pending.details.id, blocking: true }, undefined, () => {}, stock);
 await new Promise(done => setImmediate(done));
 assert.equal(tui.getFocusedComponent(), widget, 'waiting on the existing ID makes its original tab required');
 assert.match(widget.render(120).join('\n'), /★ Response required/);
-widget.handleInput('TEST_STOCK_ANSWER'); widget.handleInput('\r');
+widget.handleInput('\x1b[200~line one\n  line two\n\x1b[201~'); widget.handleInput('\r');
 const promotedResult = await promoted; await new Promise(done => setImmediate(done));
 assert.equal(appends, 2, 'promoted answer is persisted by its original native source');
 assert.equal(promotedResult.details.questionId, pending.details.id);
-assert.equal(promotedResult.details.answers[0].answer, 'TEST_STOCK_ANSWER');
+assert.equal(promotedResult.details.answers[0].answer, 'line one\n  line two\n', 'nonblocking save and later blocking wait preserve exact multiline reply text');
 assert.equal(promotedResult.details.receivedNativeAnswerIds.length, 1);
 assert.equal(tui.getFocusedComponent(), input, 'promoted completion returns to the exact original input when no async tab remains');
 assert.equal(sends, 0, 'the same saved answer is reserved for the blocking result instead of duplicate async feedback');
@@ -95,8 +100,8 @@ manager.appendMessage({ role: 'toolResult', toolCallId: 'stock-promoted', toolNa
 for (const handler of extension.handlers.get('turn_end') || []) await handler({}, stock);
 assert.equal(sends, 0, 'persisted blocking receipt prevents later duplicate feedback');
 
-const cancellable = await extension.tools.get('ask_user_question_async').definition.execute('stock-cancellable', { question: 'TEST cancellable async?' }, undefined, () => {}, stock);
-const cancelling = extension.tools.get('ask_user_question').definition.execute('stock-cancel-wait', { questionId: cancellable.details.id }, undefined, () => {}, stock);
+const cancellable = await nonblocking('stock-cancellable', 'TEST cancellable async?', stock);
+const cancelling = privateAsk.execute('stock-cancel-wait', { questionId: cancellable.details.id, blocking: true }, undefined, () => {}, stock);
 await new Promise(done => setImmediate(done)); widget.handleInput('\x1b');
 const cancelled = await cancelling; await new Promise(done => setImmediate(done));
 assert.equal(cancelled.details.cancelled, true, 'Escape releases only the blocking wait');
@@ -110,7 +115,7 @@ assert.equal(afterAnswer.details.waitStatus, 'already_queued'); assert.deepEqual
 assert.equal(afterAnswer.details.receivedNativeAnswerIds, undefined, 'a queued async delivery is not falsely claimed by a second tool result');
 assert.equal(sends, 1, 'answer-before-wait cannot enqueue or return a duplicate answer path');
 
-const interrupted = await extension.tools.get('ask_user_question_async').definition.execute('stock-interrupted', { question: 'TEST save then abort?' }, undefined, () => {}, stock);
+const interrupted = await nonblocking('stock-interrupted', 'TEST save then abort?', stock);
 const interruption = new AbortController();
 const interruptedWait = extension.tools.get('ask_user_question').definition.execute('stock-interrupted-wait', { questionId: interrupted.details.id }, interruption.signal, () => {}, stock);
 await new Promise(done => setImmediate(done)); widget.handleInput('TEST_SAVED_BEFORE_ABORT'); widget.handleInput('\r'); interruption.abort();
@@ -118,7 +123,7 @@ await assert.rejects(interruptedWait); await new Promise(done => setImmediate(do
 assert.equal(appends, 6, 'answer remains durably saved when the waiting tool aborts before its result');
 assert.equal(sends, 2, 'failed answer handoff releases its claim back to ordinary async feedback');
 
-const detached = await extension.tools.get('ask_user_question_async').definition.execute('stock-detached', { question: 'TEST settle then transition?' }, undefined, () => {}, stock);
+const detached = await nonblocking('stock-detached', 'TEST settle then transition?', stock);
 const detachedWait = extension.tools.get('ask_user_question').definition.execute('stock-detached-wait', { questionId: detached.details.id }, undefined, () => {}, stock);
 const detachedFresh = extension.tools.get('ask_user_question').definition.execute('stock-detached-fresh', { questions: [{ question: 'TEST fresh settle then transition?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, stock);
 let rpcStep = 0, resolveRpcSubmit;
@@ -147,7 +152,7 @@ await detachedWaitRejected; await detachedFreshRejected; await detachedRpcReject
 assert.equal(appends, 8, 'transition cannot erase the already saved native answer');
 assert.equal(sends, 2, 'detached handoff cannot return and enqueue the same answer');
 await assert.rejects(extension.tools.get('ask_user_question').definition.execute('blocked-new', { questions: [{ question: 'TEST blocked new?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, stock), { code: 'presentation_detached' });
-assert.equal((await extension.tools.get('ask_user_question_async').definition.execute('blocked-async', { question: 'TEST blocked async?' }, undefined, () => {}, stock)).details.status, 'session_changing');
+await assert.rejects(nonblocking('blocked-async', 'TEST blocked async?', stock), { code: 'presentation_detached' });
 await extension.commands.get('asks').handler('', stock); assert.match(notices.at(-1), /run \/reload/);
 assert.equal(sends, 2, 'unknown transition outcome stays closed instead of guessing when to flush');
 console.log(JSON.stringify({ syntheticNotScott: true, humanAcceptance: false, realMainFactory: true, rawProducerRegistrationsExactlyOnce: true, sharedToolsRemainSeparate: true, sharedToolsDefaultOff: true, printNotHumanCancel: true, olderSdkCapabilityBoundary: true, stockBlockingOnlyAsks: true, stockAsyncPersistence: true, stockPromotionIdentity: true, stockPromotionNoDuplicate: true, stockPromotionCancelPreservesQuestion: true, stockAnswerBeforeWaitNoDuplicate: true, stockSaveThenAbortRecoversFeedback: true, stockSettledHandoffBoundarySafe: true, stockFreshCompletionBoundarySafe: true, stockRpcCompletionBoundarySafe: true, stockImmediateWaitBoundarySafe: true, stockTransitionGatesBothProducers: true, stockUnknownTransitionStaysClosed: true, stockOriginalEditorCaret: true, registrations: names }, null, 2));

@@ -6,9 +6,9 @@ This is a fresh implementation. The existing questionnaire informed the experien
 
 ## Explicit composition
 
-`registerPrivateQuestions(pi)` registers our blocking `ask_user_question` and nonblocking `ask_user_question_async` once. It does not install resources or connect to Threadroom. The package MAIN uses this composition; loading it alongside another producer with the same name would be duplicate wiring. Preparing that entry point does not reload or change the resources of a running Pi session.
+`registerPrivateQuestions(pi)` registers one `ask_user_question` producer once. Blocking is the default; `blocking: false` uses the same authored shape without waiting. It does not install resources or connect to Threadroom. The package MAIN uses this composition; loading it alongside another producer with the same name would be duplicate wiring. Preparing that entry point does not reload or change the resources of a running Pi session.
 
-Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane. An async result includes its stable question ID; passing that ID as `ask_user_question({ questionId })` leases requiredness to the same pending cell instead of creating or publishing another question. The native source still owns saving. Escape releases the wait while preserving the async question and draft.
+Ordinary prompts and saved answers remain in the original Pi session/branch. Threadroom's optional shared discussion tools are a separate lane. A nonblocking result includes stable question IDs; passing one back as `ask_user_question({ questionId, blocking: true })` leases requiredness to the same pending cell instead of creating or publishing another question. The native source still owns saving. Escape releases the wait while preserving the async question and draft.
 
 In the conversation stream, cyan question cards and violet reply cards use authored titles and identity-based references to connect each exchange. Literal role labels remain readable without color. Operational echoes stay compact; expanding reveals full literal text and structured reply details. “Private” describes the Pi-local audience, not encryption, retention or delivery confirmation; warning/error colors describe actual reported failures rather than the asking or answering role.
 

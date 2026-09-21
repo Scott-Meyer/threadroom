@@ -9,5 +9,6 @@ export default function (pi: ExtensionAPI) {
       testPresent: (group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal) => Promise<QuestionResult>;
     };
     return ui.testPresent(group, ctx, signal);
-  }, (questionId, ctx, signal) => (ctx.ui as any).testWait(questionId, ctx, signal));
+  }, (questionId, ctx, signal) => (ctx.ui as any).testWait(questionId, ctx, signal), undefined,
+  (toolCallId, question, ctx, signal) => (ctx.ui as any).testAsk(toolCallId, question, ctx, signal));
 }

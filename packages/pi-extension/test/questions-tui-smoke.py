@@ -60,7 +60,7 @@ try:
     wait(lambda: any(e['event'] == 'ready' for e in events()), 'fresh fixture ready missing')
     send('TEST_START\r')
     wait(lambda: any(e['event'] == 'work_started' for e in events()), 'independent work never began')
-    native = [e['result']['details'] for e in events() if e['event'] == 'tool_end' and e['name'] == 'ask_user_question_async']
+    native = [e['result']['details'] for e in events() if e['event'] == 'tool_end' and e['id'] in ('NATIVE_A', 'NATIVE_C')]
     assert len(native) == 2 and all(result['status'] == 'pending' for result in native)
     a, c = native
     frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and frame['editorLike'], 'async arrival stole ordinary input focus'
@@ -74,9 +74,9 @@ try:
     send('\x07')
     wait(lambda: any(e['event'] == 'test_external_editor' for e in events()), 'our configured external editor never ran')
     assert next(e for e in events() if e['event'] == 'test_external_editor')['original'] == 'DRAFT_A'
-    frame = observe(); assert current(frame)['reply'] == 'DRAFT_A EDITED '
+    frame = observe(); assert current(frame)['reply'] == 'DRAFT_A\nEDITED '
     (directory / 'release').touch()
-    wait(lambda: any(e['event'] == 'tool_start' and e['name'] == 'ask_user_question' for e in events()), 'blocking producer never started')
+    wait(lambda: any(e['event'] == 'tool_start' and e['id'] == 'BLOCK_B' for e in events()), 'blocking producer never started')
     frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike']
     assert 'Response required' in '\n'.join(frame['lines'])
     send('\x1d'); frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike'], 'collapse escaped the blocker'
@@ -89,19 +89,19 @@ try:
         frame = observe(); assert 'TEST foreign selector' in '\n'.join(frame['lines'])
         send('\x1b'); wait(lambda: any(e['event'] == 'foreign_ended' for e in events()), 'SDK foreign selector did not complete')
         frame = observe(); assert current(frame)['tab']['questionId'] == 'question:0' and not frame['editorLike']
-        assert not any(e['event'] == 'tool_end' and e['name'] == 'ask_user_question' for e in events()), 'foreign Cancel completed our blocker'
+        assert not any(e['event'] == 'tool_end' and e['id'] == 'BLOCK_B' for e in events()), 'foreign Cancel completed our blocker'
     assert [tab['mode'] for tab in frame['snapshot']['tabs']] == ['blocking'] * 3 + ['async'] * 2
-    send('\t\t\t'); frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and current(frame)['reply'] == 'DRAFT_A EDITED '
+    send('\t\t\t'); frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and current(frame)['reply'] == 'DRAFT_A\nEDITED '
     child.setwinsize(18, 80); frame = observe(); assert len(frame['lines']) <= 6
     child.setwinsize(24, 80); send('\r'); frame = observe()
     if matrix:
         wait(lambda: any(e['event'] == 'controlled_append_failure' for e in events()), 'actual preappend save failure never fired')
-        frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and current(frame)['reply'] == 'DRAFT_A EDITED '
+        frame = observe(); assert current(frame)['tab']['questionId'] == a['id'] and current(frame)['reply'] == 'DRAFT_A\nEDITED '
         assert current(frame)['error'] and 'Save failed' in '\n'.join(frame['lines']), 'save failure not immediately visible'
         assert not any(e.get('customType') == 'threadroom.native.answer.v1' for e in frame['branch']), 'failure fabricated saved answer'
         assert not any(e['event'] == 'provider_feedback' for e in events()), 'failure fabricated provider delivery'
         send('\r'); frame = observe()
-    assert not any(e['event'] == 'tool_end' and e['name'] == 'ask_user_question' for e in events()), 'async save completed blocker'
+    assert not any(e['event'] == 'tool_end' and e['id'] == 'BLOCK_B' for e in events()), 'async save completed blocker'
     assert not any(e['event'] == 'provider_feedback' for e in events()), 'missed held-blocker queue window'
     send('\t'); send('\x1b[32u'); send('\x1b[B'); send(' '); send('\x1bn'); send('OPEN_NOTE'); send('\t')
     frame = observe(); assert all(value in '\n'.join(frame['lines']) for value in ['OPEN_NOTE', 'Submit answers', 'Cancel'])
@@ -138,7 +138,7 @@ try:
     receipts = [e['details'] for e in disk if e['type'] == 'custom_message' and e.get('customType') == 'threadroom.native.feedback.v1']
     assert len(answers) == len(receipts) == 2
     saved_a = next(e for e in answers if e['questionId'] == a['id']); saved_c = next(e for e in answers if e['questionId'] == c['id'])
-    assert saved_a['answer']['text'] == 'DRAFT_A EDITED' and saved_a['prompt']['question'] == 'TEST_ASYNC_A question?'
+    assert saved_a['answer']['text'] == 'DRAFT_A\nEDITED ' and saved_a['prompt']['question'] == 'TEST_ASYNC_A question?'
     assert saved_c['answer']['optionIndex'] == 1 and saved_c['answer']['selection']['preview'].endswith('PREVIEW_29')
     for saved in answers:
         assert sum(e['answerId'] == saved['answerId'] for e in receipts) == 1

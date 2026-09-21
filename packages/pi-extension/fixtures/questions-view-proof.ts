@@ -11,12 +11,14 @@ export default function(pi: any) {
     async execute(_id: any, _args: any, _signal: any, _update: any, ctx: any) {
       const tui = { requestRender() {}, terminal: { rows: 24, columns: 80 } };
       const model = new QuestionModel(), view = new QuestionView(model, tui, ctx.ui.theme); view.focused = true;
-      const question = { id: 'A', header: 'A\nB', question: 'Fresh private question?', options: [{ label: 'Same', preview: 'FIRST' }, { label: 'Same', preview: '**SECOND_LITERAL**' }], plainPreview: true };
+      const question = { id: 'A', header: 'A\nB', question: 'Fresh private question?', context: 'Run `TEST_VISIBLE_COMMAND` before choosing.', options: [{ label: 'Same', description: 'TEST_FIRST_MEANING', preview: 'FIRST' }, { label: 'Same', description: 'TEST_SECOND_MEANING', preview: '**SECOND_LITERAL**' }], plainPreview: true };
       const saved: any[] = [];
       model.enqueue({ id: 'A', mode: 'async', questions: [question], commit: (id, answer) => { saved.push({ id, answer }); } });
       assert.doesNotMatch(view.frame(80).header[0], /\n/, 'authored headers cannot break a single-row tab strip');
       assert.doesNotMatch(view.frame(80).lines.join('\n'), /\x1b\[7m/, 'an inactive reply field must not draw a caret while an authored choice is selected');
       const text = () => stripVTControlCharacters(view.frame(80).lines.join('\n'));
+      assert.match(text(), /TEST_VISIBLE_COMMAND/, 'answering context is visible in the ordinary question view');
+      assert.match(text(), /TEST_FIRST_MEANING/, 'the selected suggestion meaning is visible without opening metadata/details');
       for (const char of 'DRAFT') view.handleInput(char);
       assert.match(text(), /1\. Same/); assert.match(text(), /2\. Same/); assert.match(text(), /DRAFT/);
       const replyRows = view.frame(80).lines.map((line) => stripVTControlCharacters(line));
@@ -56,6 +58,13 @@ export default function(pi: any) {
       for (const char of 'reply') view.handleInput(char); view.handleInput('\x1bn'); for (const char of 'free note') view.handleInput(char);
       view.handleInput('\r'); view.handleInput('\r'); const freeResult = await free.outcome!;
       assert.equal(freeResult.answers[0].answer, 'reply'); assert.equal(freeResult.answers[0].notes, 'free note');
+      const largeNoteText = Array.from({ length: 12 }, (_value, index) => `note ${index}`).join('\n');
+      const largeNotes = model.enqueue({ id: 'LARGE_NOTES', mode: 'blocking', questions: [{ id: 'large-notes', question: 'Keep full notes?' }] });
+      for (const char of 'answer') view.handleInput(char);
+      view.handleInput('\x1bn'); view.handleInput(`\x1b[200~${largeNoteText}\x1b[201~`);
+      view.handleInput('\x1f'); assert.equal(model.current()!.notes, '', 'large pasted notes remain one undoable editor action');
+      view.handleInput(`\x1b[200~${largeNoteText}\x1b[201~`); view.handleInput('\x1bn'); view.handleInput('\r');
+      assert.equal((await largeNotes.outcome!).answers[0].notes, largeNoteText, 'large pasted notes survive the editor marker representation');
       const explicit = model.enqueue({ id: 'E', mode: 'blocking', questions: [{ ...question, id: 'e' }] });
       for (const char of 'retained') view.handleInput(char);
       view.handleInput('\x1b'); view.handleInput('\x1b[B'); view.handleInput('\r');
@@ -64,12 +73,19 @@ export default function(pi: any) {
       model.enqueue({ id: 'C', mode: 'async', questions: [{ id: 'C', question: 'Long 控制 question\n\x1b[31mDATA\u202e', options: [{ label: '長い' + '選択肢'.repeat(25), preview: 'TAIL\n'.repeat(30) }] }], commit() {} });
       view.handleInput('\x1b[B'); view.handleInput('\r');
       view.frame(80); assert.equal(model.current()!.custom, true, 'render cannot undo explicit empty custom-row activation');
-      view.handleInput('\x1b[200~PASTE\x1b[31mVALUE\u202e\x1b[201~');
+      view.handleInput('\x1b[200~PASTE\r\n\t\x1b[31mVALUE\u202e\x1b[201~');
+      assert.equal(model.current()!.reply, 'PASTE\n    VALUE ');
       assert.doesNotMatch(model.current()!.reply!, /\x1b|\u202e/);
+      view.focused = false;
+      for (const line of view.frame(25).lines) { assert.doesNotMatch(line, /[\n\r]/); assert.ok(visibleWidth(line) <= 25); }
+      view.focused = true;
       const beforeRepeat = model.current()!.reply!; view.handleInput('\x1b[127;1:2u'); assert.equal(model.current()!.reply, beforeRepeat.slice(0, -1), 'held Backspace remains an editing action');
       for (const width of [25, 80]) for (const inspect of [false, true]) {
         const frame = view.frame(width, inspect);
-        for (const line of [...frame.header, ...frame.lines, frame.footer]) assert.ok(visibleWidth(line) <= width, `line wider than ${width}: ${visibleWidth(line)}`);
+        for (const line of [...frame.header, ...frame.lines, frame.footer]) {
+          assert.doesNotMatch(line, /[\n\r]/, 'one rendered row cannot contain an embedded line break');
+          assert.ok(visibleWidth(line) <= width, `line wider than ${width}: ${visibleWidth(line)}`);
+        }
       }
       model.moveOption(-1); // Explicitly select the authored option before inspecting its preview.
       assert.match(stripVTControlCharacters(view.frame(25, true).lines.join('\n')), /TAIL/);
@@ -91,8 +107,8 @@ export default function(pi: any) {
       const editView = new QuestionView(edits, tui, ctx.ui.theme, () => new Promise((done) => { replace = done; }));
       edits.enqueue({ id: 'EDIT_A', mode: 'async', questions: [question], commit() {} }); editView.handleInput('a'); editView.handleInput('\x07');
       edits.enqueue({ id: 'EDIT_C', mode: 'async', questions: [question], commit() {} }); edits.select('EDIT_C', question.id);
-      replace!('EDIT\x1b[31mX\u202e\nFINAL'); await Promise.resolve(); await Promise.resolve();
-      assert.equal(edits.current()!.reply, ''); edits.select('EDIT_A', question.id); assert.equal(edits.current()!.reply, 'EDITX FINAL');
+      replace!('EDIT\x1b[31mX\u202e\n  FINAL'); await Promise.resolve(); await Promise.resolve();
+      assert.equal(edits.current()!.reply, ''); edits.select('EDIT_A', question.id); assert.equal(edits.current()!.reply, 'EDITX \n  FINAL');
       edits.dispose(); editView.dispose();
       // A minimal public host without terminal-input interception must not hide
       // the focused question behind an unreopenable/keyboard-trapping collapse.
@@ -106,7 +122,8 @@ export default function(pi: any) {
       noRaw.enqueue({ id: 'NO_RAW', mode: 'async', questions: [question], commit() {} }); await Promise.resolve(); widget.render(80);
       assert.equal(focus, ordinary, 'async arrival stays passive with public core identity'); assert.equal(noRaw.activate(), true);
       widget.handleInput('\x1d'); assert.doesNotMatch(widget.render(80).join('\n'), /Collapsed/, 'collapse is unavailable without an editor-level reopen hook');
-      widget.handleInput('visible'); assert.equal(noRaw.snapshot().current!.reply, 'visible', 'unsupported collapse cannot swallow input into a hidden draft');
+      widget.handleInput('\x1b[200~visible\x1b[201~');
+      assert.equal(noRaw.snapshot().current!.reply, 'visible', 'unsupported collapse cannot swallow pasted input into a hidden draft');
       for (const [width, rows] of [[25, 24], [80, 18]]) {
         noRawTui.terminal.rows = rows;
         const boxed = widget.render(width).map((line: string) => stripVTControlCharacters(line));

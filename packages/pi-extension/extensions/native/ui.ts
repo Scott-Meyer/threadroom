@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 // Stored text is data, never terminal instructions (including OSC links and bidi).
 export function plain(value: unknown): string {
   return stripVTControlCharacters(String(value ?? ''))
-    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, ' ');
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, ' ');
 }
 function singleLine(value: unknown) { return plain(value).replace(/\n/g, ' '); }
 export function card(text: string) { return new Text(plain(text), 0, 0); }
@@ -110,8 +110,9 @@ export class AskPanel {
     const options = prompt.options || [];
     const title = `Private question${this.items.length > 1 ? ` ${this.items.findIndex((item) => item.id === this.question.id) + 1}/${this.items.length} · Shift+Tab questions` : ''} · reply here`;
     const selected = !this.writing && options[this.option];
-    const details = [prompt.question, prompt.context,
+    const details = [prompt.header, prompt.question, prompt.context,
       selected && visibleWidth(singleLine(`› ${this.option + 1}. ${selected.label}`)) > width ? `Selected: ${selected.label}` : '',
+      selected?.description ? `Meaning: ${selected.description}` : '',
       selected?.preview ? `Preview: ${selected.preview}` : ''].filter(Boolean).join('\n\n');
     const body = wrapTextWithAnsi(plain(details), width);
     const input = this.writing ? this.input.render(width) : [];

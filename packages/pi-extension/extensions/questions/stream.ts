@@ -47,6 +47,13 @@ function nativeReplyRows(value: unknown): Row[] {
   if (integer(answer.optionIndex)) rows.push({ text: `Original suggestion: ${answer.optionIndex + 1}`, color: 'dim' });
   const selection = record(answer.selection);
   rows.push(...literal('Selected label', selection.label), ...literal('Selected preview', selection.preview));
+  const indices = list(answer.optionIndices), selections = list(answer.selections);
+  for (const [position, value] of selections.entries()) {
+    const selected = record(value), index = indices[position];
+    rows.push(...literal(integer(index) ? `Selected suggestion ${index + 1}` : 'Selected label', selected.label),
+      ...literal('Selected preview', selected.preview));
+  }
+  rows.push(...literal('Additional reply', answer.custom));
   return rows;
 }
 function contentText(result: Result): string {
@@ -134,11 +141,19 @@ const failedRequests: Record<string, string> = {
 };
 export function renderAsyncAskResult(result: Result, options: ToolRenderResultOptions, theme: Theme, context?: ToolRenderContext): Component {
   const details = record(result.details), status = field(details.status), partial = options?.isPartial || context?.isPartial;
+  const children = list(details.questions).map(record);
   const failed = Object.hasOwn(failedRequests, status) ? failedRequests[status] : undefined;
   const error = context?.isError === true, metadata = ['PRIVATE', 'ASYNC', reference('q', details.id) || callReference(context)];
   const heading = error ? 'Question request failed' : partial ? 'Question request update' : (status === 'pending' || status === 'answered' ? 'Question reference' : 'Question request result');
   const rows: Row[] = [], content = contentText(result);
   if (failed) rows.push({ text: failed, color: status === 'storage_unconfirmed' ? 'warning' : 'error', compact: true });
+  for (const [index, child] of children.entries()) {
+    const childStatus = field(child.status), childFailure = failedRequests[childStatus];
+    rows.push({ text: `Question ${index + 1}${identity(child.id) ? ` · q:${identity(child.id)}` : ''} · ${childFailure || childStatus || 'unknown result'}`,
+      color: childFailure ? childStatus === 'storage_unconfirmed' ? 'warning' : 'error' : 'dim', compact: true });
+    if (childFailure || options?.expanded) rows.push(...literal('Reason', child.reason), ...literal('Storage diagnostic', child.error),
+      ...literal('Presentation diagnostic', child.presentationError));
+  }
   if (error || !Object.keys(details).length) {
     const diagnostic = content || field(details.error) || field(details.reason);
     if (diagnostic) rows.push({ text: diagnostic, color: error ? 'error' : 'text', compact: !options?.expanded });
@@ -147,8 +162,11 @@ export function renderAsyncAskResult(result: Result, options: ToolRenderResultOp
     rows.push(...literal('Question identity', identity(details.id) || undefined), ...literal('Source call', identity(context?.toolCallId) || undefined));
     if (status) rows.push({ text: `Status reported by request: ${status}`, color: 'dim' });
     rows.push(...literal('Reason', details.reason), ...literal('Storage diagnostic', details.error), ...literal('Presentation diagnostic', details.presentationError));
-    if (context?.args) rows.push(...promptRows(context.args));
-
+    const args = record(context?.args), authored = list(args.questions);
+    if (authored.length) for (const [index, prompt] of authored.entries()) {
+      rows.push({ text: `Original question ${index + 1}`, color: 'dim' }, ...promptRows(prompt));
+    }
+    else if (context?.args) rows.push(...promptRows(context.args));
   }
   return card('context', heading, '', metadata, rows, theme);
 }
@@ -202,7 +220,7 @@ export function renderBlockingAskResult(result: Result, options: ToolRenderResul
   const metadata = ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || record(context?.args).questionId) : callReference(context) || reference('group', details.groupId)];
   const rows: Row[] = [];
   if (existing) {
-    if (details.cancelled === true) rows.push({ text: 'Wait cancelled · original async question remains pending', color: 'dim', compact: true });
+    if (details.cancelled === true) rows.push({ text: 'Wait cancelled · original nonblocking question remains pending', color: 'dim', compact: true });
     else if (typeof details.waitNote === 'string') rows.push({ text: field(details.waitNote), color: 'dim', compact: true });
     else if (answers.length) rows.push({ text: 'Saved reply returned through this blocking wait', color: 'dim', compact: true });
   } else if (typeof details.cancelled === 'boolean') {
@@ -220,4 +238,23 @@ export function renderBlockingAskResult(result: Result, options: ToolRenderResul
     if (text) rows.push({ text, color: error ? 'error' : 'text', compact: !options?.expanded });
   }
   return card(error ? 'context' : 'reply', heading, '', metadata, rows, theme);
+}
+
+/** One public question tool has two execution modes. The authored schema stays
+ * familiar; only an explicit blocking=false changes the execution contract. */
+export function renderPrivateAskCall(args: unknown, theme: Theme, context?: ToolRenderContext): Component {
+  const input = record(args);
+  if (input.blocking !== false) return renderBlockingAskCall(args, theme, context);
+  const questions = list(input.questions), first = record(questions[0]);
+  if (questions.length === 1) return renderAsyncAskCall(first, theme, context);
+  return card('question', 'Question request', title(first), ['PRIVATE', 'ASYNC', callReference(context)],
+    context?.expanded ? questions.flatMap((question, index) => [
+      { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
+    ]) : [{ text: `${questions.length} questions · continues without waiting`, color: 'dim', compact: true }], theme);
+}
+
+export function renderPrivateAskResult(result: Result, options: ToolRenderResultOptions, theme: Theme, context?: ToolRenderContext): Component {
+  return record(context?.args).blocking === false
+    ? renderAsyncAskResult(result, options, theme, context)
+    : renderBlockingAskResult(result, options, theme, context);
 }

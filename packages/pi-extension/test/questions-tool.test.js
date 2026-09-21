@@ -50,6 +50,43 @@ test('blocking authoring bounds validate via SDK without restricting duplicate l
   await assert.rejects(() => f.tool.execute('both', { questionId: 'ask-id', questions: [spec()] }, undefined, undefined, f.ctx), { code: 'invalid_arguments' });
 });
 
+test('one public tool defaults to blocking and explicitly creates or upgrades nonblocking questions', options, async (t) => {
+  const f = await fixture(t), calls = [];
+  assert.equal(f.tool.parameters.properties.blocking.default, true);
+  assert.equal(f.validate({ questions: [spec()] }).blocking, undefined, 'omission stays omission at the SDK boundary; execution treats it as true');
+  f.ctx.ui.testAsk = async (toolCallId, question, ctx, signal) => {
+    calls.push({ toolCallId, question, ctx, signal });
+    const details = { id: `pending:${toolCallId}`, status: 'pending', waitWith: {
+      tool: 'ask_user_question', questionId: `pending:${toolCallId}`, blocking: true,
+    } };
+    return { content: [{ type: 'text', text: JSON.stringify(details) }], details };
+  };
+  const params = f.validate({ blocking: false, questions: [spec('TEST later?', { header: 'Later', context: 'TEST context', multiSelect: true,
+    options: [{ label: 'Same', description: 'TEST first meaning' }, { label: 'Same', description: 'TEST second meaning', preview: 'TEST preview' }] })] });
+  const pending = await f.tool.execute('TEST_NONBLOCKING', params, undefined, undefined, f.ctx);
+  assert.equal(calls.length, 1); assert.equal(calls[0].toolCallId, 'TEST_NONBLOCKING:0'); assert.equal(calls[0].ctx, f.ctx);
+  assert.equal(calls[0].signal.aborted, false);
+  assert.deepEqual(calls[0].question, { question: 'TEST later?', header: 'Later', context: 'TEST context', options: [
+    { label: 'Same', description: 'TEST first meaning' },
+    { label: 'Same', description: 'TEST second meaning', preview: 'TEST preview' },
+  ], multiSelect: true });
+  assert.equal(pending.details.id, 'pending:TEST_NONBLOCKING:0');
+  assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questionId: pending.details.id, blocking: true });
+  await assert.rejects(() => f.tool.execute('TEST_BAD_REFERENCE', f.validate({ questionId: pending.details.id, blocking: false }), undefined, undefined, f.ctx), { code: 'invalid_arguments' });
+});
+
+test('a lifecycle boundary during a nonblocking batch cannot admit later items', options, async (t) => {
+  const f = await fixture(t), calls = [];
+  f.ctx.ui.testAsk = async (toolCallId, question) => {
+    calls.push({ toolCallId, question });
+    if (calls.length === 1) await f.emit('session_before_switch');
+    return { content: [{ type: 'text', text: '{}' }], details: { id: `pending:${toolCallId}`, status: 'pending' } };
+  };
+  const validBatch = f.validate({ blocking: false, questions: [spec('TEST first?'), spec('TEST second?', { multiSelect: true })] });
+  await assert.rejects(() => f.tool.execute('TEST_FENCED_BATCH', validBatch, undefined, undefined, f.ctx), { code: 'presentation_detached' });
+  assert.deepEqual(calls.map(({ question }) => question.question), ['TEST first?']);
+});
+
 test('TUI delegation retains stable group/local IDs and exact authored partial, multi, notes and cancellation results', options, async (t) => {
   const f = await fixture(t), seen = [];
   const answers = [{ questionIndex: 1, question: 'TEST multi?', selected: ['Same', 'Same'], optionIndices: [0, 1],
@@ -171,6 +208,18 @@ test('dialog abort never fabricates human cancellation; late failure is observed
   f.ctx.mode = 'tui';
   f.ctx.ui.testPresent = async () => { throw Object.assign(new Error('TEST presenter detached'), { code: 'presentation_detached' }); };
   await assert.rejects(f.ask('TEST-presenter-detached', [spec()]), { code: 'presentation_detached' });
+});
+
+test('cancelling a wait tells the model that the original nonblocking question remains pending', options, async (t) => {
+  const f = await fixture(t);
+  f.ctx.ui.testWait = async (questionId) => ({ sessionId: 'TEST-session', questionId, status: 'cancelled',
+    result: { answers: [], cancelled: true } });
+  const result = await f.tool.execute('TEST_WAIT_CANCEL_CONTENT', f.validate({ questionId: 'ask-existing' }), undefined, undefined, f.ctx);
+  assert.deepEqual(JSON.parse(result.content[0].text), {
+    status: 'cancelled', questionId: 'ask-existing', answers: [], cancelled: true,
+    note: 'Blocking wait cancelled. The original nonblocking question remains pending.',
+  });
+  assert.equal(result.details.waitStatus, 'cancelled');
 });
 
 test('a native wait cancellation settled just before a boundary cannot return from the old activation', options, async (t) => {

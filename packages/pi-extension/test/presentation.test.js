@@ -119,7 +119,7 @@ const options = { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT for 
 
 test('a retired shared-API alias cannot redirect owned ordinary asks into Threadroom', options, async (t) => {
   const f = await fixture(t, { staleApiAlias: true });
-  assert.deepEqual([...f.extension.tools.keys()].sort(), ['ask_user_question', 'ask_user_question_async', 'threadroom_ask', 'threadroom'].sort());
+  assert.deepEqual([...f.extension.tools.keys()].sort(), ['ask_user_question', 'threadroom_ask', 'threadroom'].sort());
   await assert.rejects(() => f.extension.tools.get('ask_user_question').definition.execute('private-print', {
     questions: [{ question: 'TEST private prompt?', options: [{ label: 'One', description: 'First' }, { label: 'Two', description: 'Second' }] }],
   }, undefined, () => {}, { mode: 'print', hasUI: false, ui: f.ctx.ui }), { code: 'unsupported_host' });
@@ -129,7 +129,7 @@ test('a retired shared-API alias cannot redirect owned ordinary asks into Thread
 test('Pi loads the adapter and renders expressive calls, durable results and saved feedback without changing receipts', options, async (t) => {
   const f = await fixture(t);
   const ask = f.extension.tools.get('threadroom_ask').definition;
-  assert.deepEqual([...f.extension.tools.keys()].sort(), ['ask_user_question', 'ask_user_question_async', 'threadroom_ask', 'threadroom'].sort());
+  assert.deepEqual([...f.extension.tools.keys()].sort(), ['ask_user_question', 'threadroom_ask', 'threadroom'].sort());
   const source = '<script>const SOURCE_ONLY_MARKER = "private authored program";</script>'.repeat(2000);
   const params = { question: 'How should this motion feel?', html: source, fallback: 'A study with quiet center and restless edges.' };
   const call = f.row('threadroom_ask', params);
