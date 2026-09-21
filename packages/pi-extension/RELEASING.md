@@ -38,4 +38,4 @@ npm view threadroom-pi version dist-tags
 pi -e npm:threadroom-pi@0.1.0-beta.0
 ```
 
-Tag the verified commit as `threadroom-pi-v0.1.0-beta.0` and push that tag. Do not add the `latest` dist-tag until the package is intentionally promoted beyond beta. If a beta is flawed, deprecate that immutable version and publish the next prerelease rather than silently replacing it.
+Tag the verified commit as `threadroom-pi-v0.1.0-beta.0` and push that tag. Keep prerelease publication explicit with `--tag beta`; npm may also point `latest` at a registry's first published version, but the prerelease version remains the authoritative stability signal. If a beta is flawed, deprecate that immutable version and publish the next prerelease rather than silently replacing it.

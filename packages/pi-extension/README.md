@@ -6,7 +6,7 @@ This is beta software. The private-question experience is usable and tested on P
 
 ## Install
 
-Requires Node 24 or newer. The beta release is intentionally outside npm's `latest` channel:
+Requires Node 24 or newer. Install the explicit beta channel:
 
 ```sh
 pi install npm:threadroom-pi@beta
