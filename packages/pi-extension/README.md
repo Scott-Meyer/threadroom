@@ -1,6 +1,22 @@
-# Native asking and optional Threadroom for Pi
+# Threadroom for Pi
 
-Keep everyday questions in Pi, and bring a discussion to Threadroom when it should be shared and outlive this seat. This package owns one private `ask_user_question` tool using one flat input-area surface. It blocks by default; `blocking: false` leaves questions pending while the AI continues. It is a fresh SDK implementation, not a fork or dependency of another questionnaire, and remains an unreleased local beta.
+Ask private questions without making the AI guess or stop useful independent work. `threadroom-pi` owns one `ask_user_question` tool with a shared input-area surface: questions block by default, while `blocking: false` leaves them open as the AI continues. The optional shared Threadroom lane is experimental, off by default, and never starts or contacts its bundled local service during private questions.
+
+This is beta software. The private-question experience is usable and tested on Pi 0.86.x; shared discussions, remote deployment, authentication, and broader host compatibility are still evolving. Pi extensions execute with the same system access as Pi, so review packages before installing them.
+
+## Install
+
+Requires Node 24 or newer. The beta release is intentionally outside npm's `latest` channel:
+
+```sh
+pi install npm:threadroom-pi@beta
+```
+
+Reload or restart Pi after changing packages. `threadroom-pi` must be the only active producer of `ask_user_question`; disable another questionnaire extension before enabling it. To try the current checkout without installation:
+
+```sh
+pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
+```
 
 ## Private questions
 
@@ -38,15 +54,11 @@ The shared lane is **off by default**; private questions remain available. `/thr
 
 The durable files are `~/.pi/agent/threadroom.json` (or Pi’s configured agent directory) and `<project>/.pi/threadroom.json`. Project configuration is not read before Pi trusts that project. Missing settings inherit downward from the built-in off default. A malformed effective setting fails the shared lane closed without disabling private questions; an explicit valid trusted-project value can still override a malformed computer default, which remains visible as a warning. Run `/reload` after changing the setting. When off, shared tools are absent from the model’s active tool set, configured shared endpoints are not parsed or contacted, restored shared watches do not connect, and no managed service starts.
 
-## Try it
+## Local development
 
-Native async needs only normal interactive Pi—no Threadroom API, website or patched SDK. The stock-compatible focus refinement is still under validation; preparing it does not reload a running session. Once enabled, shared Threadroom tools lazily ensure the bundled local service unless an explicit endpoint or startup opt-out assigns that responsibility elsewhere. From this repository, load the extension explicitly:
+Private nonblocking questions need only normal interactive Pi—no Threadroom API, website, or patched SDK. The checkout command under Install isolates a trial from other extensions; preparing source does not reload a running session. Shared Threadroom tools lazily ensure the bundled local service only after that lane is explicitly enabled, unless an endpoint or startup opt-out assigns service ownership elsewhere.
 
-```sh
-pi --no-extensions -e ./packages/pi-extension/extensions/index.ts
-```
-
-That isolates the trial from existing extensions. For normal project loading, first exclude any other producer of `ask_user_question`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
+For normal project loading, first exclude any other producer of `ask_user_question`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
 
 The packed adapter includes the local service runtime. After the shared lane is enabled, the first shared Threadroom request—or restoration of active shared watches—reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
 
@@ -92,3 +104,7 @@ The Node transport and participation modules under `src/` have no Pi or renderin
 A consumer owns the client's lifetime: close its participants first, then `await client.close()`. Client closure cancels its active requests/streams and releases its sockets, is idempotent, and permanently rejects new requests; it does not affect another client. `Participation.close()` ends that subscription, not the reusable client. The Pi extension releases its outgoing client on quit/reload/session replacement, giving a replacement session a fresh lazy client. A future terminal UI can consume the same service; its integration point remains open.
 
 Captured presentations are immutable today. An evolving job dashboard or two-way live workspace needs an explicit service capability, not a hidden local server or a Pi-only conversation store. Hard CPU isolation, authentication, remote deployment, large-history scalability, notification preferences, and broader host lifecycle evidence remain unfinished.
+
+## License
+
+The code distributed in this package, including its bundled local service runtime, is available under the [MIT License](LICENSE).

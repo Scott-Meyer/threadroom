@@ -1,17 +1,38 @@
 {
   "name": "threadroom-pi",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-beta.0",
+  "private": false,
   "type": "module",
   "description": "Private blocking or nonblocking questions and optional durable Threadroom discussions for Pi",
-  "keywords": ["pi-package"],
-  "files": ["extensions/", "src/", "README.md"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "ask-user-question",
+    "questionnaire",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "Scott Meyer <17101862+Scott-Meyer@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Scott-Meyer/threadroom.git",
+    "directory": "packages/pi-extension"
+  },
+  "homepage": "https://github.com/Scott-Meyer/threadroom/tree/main/packages/pi-extension#readme",
+  "bugs": {
+    "url": "https://github.com/Scott-Meyer/threadroom/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["extensions/", "src/", "scripts/", "README.md", "LICENSE"],
   "engines": { "node": ">=24" },
   "dependencies": {
     "threadroom-service": "0.1.0"
   },
   "bundleDependencies": ["threadroom-service"],
   "scripts": {
+    "prepublishOnly": "node scripts/verify-release.js",
     "prepack": "node scripts/stage-service.js stage",
     "postpack": "node scripts/stage-service.js clean"
   },

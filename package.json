@@ -18,7 +18,9 @@
     "api": "THREADROOM_SERVE_UI=0 node src/main.js",
     "ui": "node src/ui-main.js",
     "pi:pack:check": "npm pack --workspace threadroom-pi --dry-run",
-    "pi:pack": "npm pack --workspace threadroom-pi"
+    "pi:pack": "npm pack --workspace threadroom-pi",
+    "pi:artifact:check": "node packages/pi-extension/scripts/verify-packed.js",
+    "pi:release:check": "node packages/pi-extension/scripts/verify-release.js --full"
   },
   "engines": {
     "node": ">=24"
