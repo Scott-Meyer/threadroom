@@ -38,16 +38,19 @@ async function fixture(t) {
 test('blocking authoring bounds validate via SDK without restricting duplicate labels or rich comparison data', options, async (t) => {
   const f = await fixture(t);
   assert.equal(f.tool.parameters.type, 'object', 'provider-facing tool schema keeps an object root');
+  assert.deepEqual(f.tool.parameters.required, ['questions'], 'one required collection avoids fabricated values for an inactive alternative');
+  assert.equal(f.tool.parameters.properties.questionId, undefined, 'pending identity is not a competing top-level field');
   assert.deepEqual(f.validate({ questions: [spec()] }).questions[0].options.map((item) => item.label), ['Same', 'Same']);
-  assert.equal(f.validate({ questionId: 'ask-stable-id' }).questionId, 'ask-stable-id');
+  assert.equal(f.validate({ questions: [{ questionId: 'ask-stable-id' }] }).questions[0].questionId, 'ask-stable-id');
   assert.equal(f.validate({ questions: [spec('TEST rich?', { options: [{ label: 'Type something.', preview: 'TEST\n'.repeat(4000) }, { label: 'Other' }] })] }).questions.length, 1);
   for (const questions of [[], Array.from({ length: 5 }, () => spec()), [spec('', {})], [spec('TEST?', { options: [] })],
     [spec('TEST?', { options: [{ label: 'Only' }] })], [spec('TEST?', { options: Array.from({ length: 5 }, () => ({ label: 'Many' })) })],
     [spec('TEST?', { header: 'x'.repeat(17) })], [spec('TEST?', { unknown: true })]]) {
     assert.throws(() => f.validate({ questions }), /Validation failed/);
   }
+  assert.throws(() => f.validate({ questions: [spec()], questionId: 'TEST_STRAY_ID' }), /Validation failed/);
+  assert.throws(() => f.validate({ questions: [spec(), { questionId: 'ask-stable-id' }] }), /Validation failed/);
   await assert.rejects(() => f.tool.execute('neither', {}, undefined, undefined, f.ctx), { code: 'invalid_arguments' });
-  await assert.rejects(() => f.tool.execute('both', { questionId: 'ask-id', questions: [spec()] }, undefined, undefined, f.ctx), { code: 'invalid_arguments' });
 });
 
 test('one public tool defaults to blocking and explicitly creates or upgrades nonblocking questions', options, async (t) => {
@@ -57,7 +60,7 @@ test('one public tool defaults to blocking and explicitly creates or upgrades no
   f.ctx.ui.testAsk = async (toolCallId, question, ctx, signal) => {
     calls.push({ toolCallId, question, ctx, signal });
     const details = { id: `pending:${toolCallId}`, status: 'pending', waitWith: {
-      tool: 'ask_user_question', questionId: `pending:${toolCallId}`, blocking: true,
+      tool: 'ask_user_question', questions: [{ questionId: `pending:${toolCallId}` }], blocking: true,
     } };
     return { content: [{ type: 'text', text: JSON.stringify(details) }], details };
   };
@@ -71,8 +74,8 @@ test('one public tool defaults to blocking and explicitly creates or upgrades no
     { label: 'Same', description: 'TEST second meaning', preview: 'TEST preview' },
   ], multiSelect: true });
   assert.equal(pending.details.id, 'pending:TEST_NONBLOCKING:0');
-  assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questionId: pending.details.id, blocking: true });
-  await assert.rejects(() => f.tool.execute('TEST_BAD_REFERENCE', f.validate({ questionId: pending.details.id, blocking: false }), undefined, undefined, f.ctx), { code: 'invalid_arguments' });
+  assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questions: [{ questionId: pending.details.id }], blocking: true });
+  await assert.rejects(() => f.tool.execute('TEST_BAD_REFERENCE', f.validate({ questions: [{ questionId: pending.details.id }], blocking: false }), undefined, undefined, f.ctx), { code: 'invalid_arguments' });
 });
 
 test('a lifecycle boundary during a nonblocking batch cannot admit later items', options, async (t) => {
@@ -214,7 +217,7 @@ test('cancelling a wait tells the model that the original nonblocking question r
   const f = await fixture(t);
   f.ctx.ui.testWait = async (questionId) => ({ sessionId: 'TEST-session', questionId, status: 'cancelled',
     result: { answers: [], cancelled: true } });
-  const result = await f.tool.execute('TEST_WAIT_CANCEL_CONTENT', f.validate({ questionId: 'ask-existing' }), undefined, undefined, f.ctx);
+  const result = await f.tool.execute('TEST_WAIT_CANCEL_CONTENT', f.validate({ questions: [{ questionId: 'ask-existing' }] }), undefined, undefined, f.ctx);
   assert.deepEqual(JSON.parse(result.content[0].text), {
     status: 'cancelled', questionId: 'ask-existing', answers: [], cancelled: true,
     note: 'Blocking wait cancelled. The original nonblocking question remains pending.',
@@ -228,7 +231,7 @@ test('a native wait cancellation settled just before a boundary cannot return fr
     waits++; return { sessionId: 'TEST-session', questionId, status: 'cancelled',
       result: { answers: [], cancelled: true } };
   };
-  const outgoing = f.tool.execute('TEST_WAIT_CANCEL', f.validate({ questionId: 'ask-existing' }), undefined, undefined, f.ctx);
+  const outgoing = f.tool.execute('TEST_WAIT_CANCEL', f.validate({ questions: [{ questionId: 'ask-existing' }] }), undefined, undefined, f.ctx);
   const transition = f.emit('session_before_fork');
   await assert.rejects(outgoing, { code: 'presentation_detached' }); await transition;
   assert.equal(waits, 1);

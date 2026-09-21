@@ -11,9 +11,9 @@ export type QuestionPresenter = (
   group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal,
 ) => Promise<QuestionPresentation>;
 
-// These authoring limits belong to new question groups, not to a referenced
-// pending question or the shared renderer.
-const authoredQuestions = Type.Array(Type.Object({
+// New questions and references share one required collection so an omitted
+// alternative never needs a fabricated placeholder in a generated tool call.
+const authoredQuestion = Type.Object({
   question: Type.String({ minLength: 1, description: 'What the person is being asked.' }),
   header: Type.Optional(Type.String({ maxLength: 16, description: 'Short tab label.' })),
   context: Type.Optional(Type.String({ description: 'Supporting detail shown directly beneath the question, such as a command, path, or comparison background.' })),
@@ -23,15 +23,20 @@ const authoredQuestions = Type.Array(Type.Object({
     preview: Type.Optional(Type.String({ description: 'Additional content shown when this suggestion is selected.' })),
   }, { additionalProperties: false }), { minItems: 2, maxItems: 4 }),
   multiSelect: Type.Optional(Type.Boolean()),
-}, { additionalProperties: false }), { minItems: 1, maxItems: 4 });
+}, { additionalProperties: false });
+const pendingQuestion = Type.Object({
+  questionId: Type.String({ minLength: 1,
+    description: 'Stable pending ID returned by an earlier nonblocking call. Reuses that question instead of asking it again.' }),
+}, { additionalProperties: false });
 const parameters = Type.Object({
-  questions: Type.Optional(authoredQuestions),
-  questionId: Type.Optional(Type.String({ minLength: 1,
-    description: 'Stable pending ID returned by an earlier nonblocking call. Reuses that question instead of asking it again.' })),
+  questions: Type.Union([
+    Type.Array(authoredQuestion, { minItems: 1, maxItems: 4 }),
+    Type.Array(pendingQuestion, { minItems: 1, maxItems: 1 }),
+  ], { description: 'New questions, or one pending question reference when returning to an earlier nonblocking question.' }),
   blocking: Type.Optional(Type.Boolean({ default: true,
     description: 'Wait for an answer before continuing. Defaults to true; set false to leave new questions pending while continuing.' })),
 }, { additionalProperties: false,
-  description: 'Provide either new questions or one existing questionId. blocking defaults to true.' });
+  description: 'Provide 1–4 new questions, or a single pending question reference. blocking defaults to true.' });
 
 function failure(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
@@ -222,20 +227,22 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
       if (!ctx.hasUI || ctx.mode === 'print' || ctx.mode === 'json') {
         throw failure('unsupported_host', 'ask_user_question needs an interactive TUI or SDK dialog host; no question was presented and no human declined.');
       }
-      const referencesExisting = typeof params.questionId === 'string';
+      const requests = Array.isArray(params.questions) ? params.questions : [];
+      const references = requests.filter((request): request is { questionId: string } => 'questionId' in request);
+      const reference = references[0], authored = reference ? undefined : requests;
       const blocking = params.blocking !== false;
-      if (referencesExisting === Array.isArray(params.questions)) {
-        throw failure('invalid_arguments', 'Provide either questions or questionId, not both.');
+      if (!requests.length || references.length > 1 || (reference && requests.length !== 1)) {
+        throw failure('invalid_arguments', 'Provide 1–4 new questions, or one existing pending question reference.');
       }
-      if (referencesExisting && !blocking) {
-        throw failure('invalid_arguments', 'questionId references an already pending question; use blocking=true to wait for it.');
+      if (reference && !blocking) {
+        throw failure('invalid_arguments', 'A pending question reference is already nonblocking; wait for it with blocking=true.');
       }
       if (!blocking && !askNonblocking) throw failure('unsupported_host', 'This question producer does not support nonblocking questions.');
       active.add(controller);
       try {
         if (!blocking) {
           const results = [];
-          for (const [index, spec] of params.questions!.entries()) {
+          for (const [index, spec] of authored!.entries()) {
             results.push(await askNonblocking!(`${toolCallId}:${index}`, {
               question: spec.question,
               ...(spec.header !== undefined ? { header: spec.header } : {}),
@@ -253,14 +260,14 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
           const value = { status: !accepted ? 'partial' : questions.every((item) => item.status === 'answered') ? 'answered' : 'pending', questions };
           return { content: [{ type: 'text', text: JSON.stringify(value) }], details: value };
         }
-        if (referencesExisting) {
+        if (reference) {
           if (ctx.mode !== 'tui' || !waitExisting) throw failure('unsupported_host', 'Waiting on an existing private nonblocking question needs the interactive TUI host that owns it.');
           let waited: Awaited<ReturnType<ExistingQuestionWait>> | undefined;
           try {
             // The native wait already owns lifetime cancellation. Keeping its
             // resolved value visible here lets a final abort release a claim
             // before any answer-bearing tool result exists.
-            waited = await waitExisting(params.questionId!, ctx, lifetime);
+            waited = await waitExisting(reference.questionId, ctx, lifetime);
             lifetime.throwIfAborted();
             // Every native outcome is activation-bound; answer-bearing outcomes
             // additionally arbitrate the one delivery winner.
@@ -284,7 +291,7 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
         const acceptCompletion = ctx.mode === 'tui' ? undefined : captureAdmission?.(ctx);
         const group: QuestionGroup = Object.freeze({
           id: `blocking:${toolCallId}`, mode: 'blocking',
-          questions: Object.freeze(params.questions!.map((spec, index) => Object.freeze({
+          questions: Object.freeze(authored!.map((spec, index) => Object.freeze({
             ...spec, id: `question:${index}`,
             options: Object.freeze(spec.options.map((option) => Object.freeze({ ...option }))),
           }))),

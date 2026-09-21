@@ -81,9 +81,9 @@ assert.equal(tui.getFocusedComponent(), input); input.handleInput('X');
 assert.equal(input.getText(), 'TEST_STOCK_DRAFXT', 'activation and cancellation retain original SDK Editor caret');
 const pending = await nonblocking('stock-async', 'TEST stock async?', stock);
 assert.equal(pending.details.status, 'pending'); assert.equal(appends, 1, 'stock SDK async is admitted and saved');
-assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questionId: pending.details.id, blocking: true });
+assert.deepEqual(pending.details.waitWith, { tool: 'ask_user_question', questions: [{ questionId: pending.details.id }], blocking: true });
 assert.equal(tui.getFocusedComponent(), input, 'stock async arrival remains passive');
-const promoted = privateAsk.execute('stock-promoted', { questionId: pending.details.id, blocking: true }, undefined, () => {}, stock);
+const promoted = privateAsk.execute('stock-promoted', { questions: [{ questionId: pending.details.id }], blocking: true }, undefined, () => {}, stock);
 await new Promise(done => setImmediate(done));
 assert.equal(tui.getFocusedComponent(), widget, 'waiting on the existing ID makes its original tab required');
 assert.match(widget.render(120).join('\n'), /★ Response required/);
@@ -101,7 +101,7 @@ for (const handler of extension.handlers.get('turn_end') || []) await handler({}
 assert.equal(sends, 0, 'persisted blocking receipt prevents later duplicate feedback');
 
 const cancellable = await nonblocking('stock-cancellable', 'TEST cancellable async?', stock);
-const cancelling = privateAsk.execute('stock-cancel-wait', { questionId: cancellable.details.id, blocking: true }, undefined, () => {}, stock);
+const cancelling = privateAsk.execute('stock-cancel-wait', { questions: [{ questionId: cancellable.details.id }], blocking: true }, undefined, () => {}, stock);
 await new Promise(done => setImmediate(done)); widget.handleInput('\x1b');
 const cancelled = await cancelling; await new Promise(done => setImmediate(done));
 assert.equal(cancelled.details.cancelled, true, 'Escape releases only the blocking wait');
@@ -110,21 +110,21 @@ await extension.commands.get('asks').handler(cancellable.details.id, stock); ass
 widget.handleInput('TEST_LATER_ASYNC_ANSWER'); widget.handleInput('\r'); await new Promise(done => setImmediate(done));
 assert.equal(appends, 4, 'released question remains pending and can be answered later');
 assert.equal(sends, 1, 'later ordinary async completion follows the original feedback path once');
-const afterAnswer = await extension.tools.get('ask_user_question').definition.execute('stock-after-answer', { questionId: cancellable.details.id }, undefined, () => {}, stock);
+const afterAnswer = await extension.tools.get('ask_user_question').definition.execute('stock-after-answer', { questions: [{ questionId: cancellable.details.id }] }, undefined, () => {}, stock);
 assert.equal(afterAnswer.details.waitStatus, 'already_queued'); assert.deepEqual(afterAnswer.details.answers, []);
 assert.equal(afterAnswer.details.receivedNativeAnswerIds, undefined, 'a queued async delivery is not falsely claimed by a second tool result');
 assert.equal(sends, 1, 'answer-before-wait cannot enqueue or return a duplicate answer path');
 
 const interrupted = await nonblocking('stock-interrupted', 'TEST save then abort?', stock);
 const interruption = new AbortController();
-const interruptedWait = extension.tools.get('ask_user_question').definition.execute('stock-interrupted-wait', { questionId: interrupted.details.id }, interruption.signal, () => {}, stock);
+const interruptedWait = extension.tools.get('ask_user_question').definition.execute('stock-interrupted-wait', { questions: [{ questionId: interrupted.details.id }] }, interruption.signal, () => {}, stock);
 await new Promise(done => setImmediate(done)); widget.handleInput('TEST_SAVED_BEFORE_ABORT'); widget.handleInput('\r'); interruption.abort();
 await assert.rejects(interruptedWait); await new Promise(done => setImmediate(done));
 assert.equal(appends, 6, 'answer remains durably saved when the waiting tool aborts before its result');
 assert.equal(sends, 2, 'failed answer handoff releases its claim back to ordinary async feedback');
 
 const detached = await nonblocking('stock-detached', 'TEST settle then transition?', stock);
-const detachedWait = extension.tools.get('ask_user_question').definition.execute('stock-detached-wait', { questionId: detached.details.id }, undefined, () => {}, stock);
+const detachedWait = extension.tools.get('ask_user_question').definition.execute('stock-detached-wait', { questions: [{ questionId: detached.details.id }] }, undefined, () => {}, stock);
 const detachedFresh = extension.tools.get('ask_user_question').definition.execute('stock-detached-fresh', { questions: [{ question: 'TEST fresh settle then transition?', options: [{ label: 'One' }, { label: 'Two' }] }] }, undefined, () => {}, stock);
 let rpcStep = 0, resolveRpcSubmit;
 const rpc = { ...stock, mode: 'rpc', ui: { async select(_title, choices) {
@@ -138,7 +138,7 @@ await new Promise(done => setImmediate(done)); assert.equal(typeof resolveRpcSub
 widget.handleInput('TEST_FRESH_BEFORE_TRANSITION'); widget.handleInput('\r'); widget.handleInput('\r');
 widget.handleInput('TEST_SAVED_BEFORE_TRANSITION'); widget.handleInput('\r');
 resolveRpcSubmit();
-const detachedAlreadyQueued = extension.tools.get('ask_user_question').definition.execute('stock-detached-already', { questionId: cancellable.details.id }, undefined, () => {}, stock);
+const detachedAlreadyQueued = extension.tools.get('ask_user_question').definition.execute('stock-detached-already', { questions: [{ questionId: cancellable.details.id }] }, undefined, () => {}, stock);
 // Match ExtensionRunner's sequential awaited dispatch: each synchronous handler
 // yields a microtask before the next one. The native activation fence must close
 // answer, fresh-group, and immediate non-answer outcomes before the later

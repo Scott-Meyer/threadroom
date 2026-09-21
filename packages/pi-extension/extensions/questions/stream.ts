@@ -172,14 +172,16 @@ export function renderAsyncAskResult(result: Result, options: ToolRenderResultOp
 }
 
 export function renderBlockingAskCall(args: unknown, theme: Theme, context?: ToolRenderContext): Component {
-  const input = record(args), questionId = identity(input.questionId), questions = list(input.questions), first = questions[0];
+  const input = record(args), requests = list(input.questions), first = record(requests[0]);
+  const nestedQuestionId = requests.length === 1 ? identity(first.questionId) : '';
+  const questionId = nestedQuestionId || (!requests.length ? identity(input.questionId) : ''), questions = questionId ? [] : requests;
   const rows: Row[] = questionId
     ? context?.expanded ? literal('Existing question identity', questionId) : []
     : context?.expanded ? questions.flatMap((question, index) => [
       { text: `Original question ${index + 1}`, color: 'dim' as const }, ...promptRows(question),
     ]) : questions.length > 1 ? [{ text: `${questions.length} questions · waits for this group`, color: 'dim', compact: true }] : [];
   return card('question', questionId ? 'Wait for existing question' : 'Question request', title(first),
-    ['PRIVATE', 'BLOCKING', questionId ? reference('q', input.questionId) : callReference(context)], rows, theme);
+    ['PRIVATE', 'BLOCKING', questionId ? reference('q', questionId) : callReference(context)], rows, theme);
 }
 function blockingAnswerRows(value: unknown, specs: unknown[], expanded: boolean, ref: string): Row[] {
   const answer = record(value), index = integer(answer.questionIndex) ? answer.questionIndex : undefined;
@@ -209,15 +211,18 @@ function blockingAnswerRows(value: unknown, specs: unknown[], expanded: boolean,
 
 /** Partial replies retain authored indices; abort/errors never become a human cancel. */
 export function renderBlockingAskResult(result: Result, options: ToolRenderResultOptions, theme: Theme, context?: ToolRenderContext): Component {
-  const details = record(result.details), answers = list(details.answers), specs = list(record(context?.args).questions);
-  const questionId = identity(details.questionId) || identity(record(context?.args).questionId), existing = !!questionId;
+  const details = record(result.details), input = record(context?.args), requests = list(input.questions), first = record(requests[0]);
+  const nestedQuestionId = requests.length === 1 ? identity(first.questionId) : '';
+  const referencedQuestionId = nestedQuestionId || (!requests.length ? identity(input.questionId) : '');
+  const specs = referencedQuestionId ? [] : requests, answers = list(details.answers);
+  const questionId = identity(details.questionId) || referencedQuestionId, existing = !!questionId;
   const partial = options?.isPartial || context?.isPartial, error = context?.isError;
   const recognizedReply = typeof details.cancelled === 'boolean' || Array.isArray(details.answers);
   const heading = error ? 'Question request failed' : partial ? 'Reply update'
     : existing && details.cancelled === true ? 'Question wait cancelled'
     : existing ? 'Question wait result'
     : details.cancelled === true ? 'Questionnaire cancelled' : recognizedReply ? 'Your replies' : 'Question request result';
-  const metadata = ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || record(context?.args).questionId) : callReference(context) || reference('group', details.groupId)];
+  const metadata = ['PRIVATE', 'BLOCKING', existing ? reference('q', details.questionId || referencedQuestionId) : callReference(context) || reference('group', details.groupId)];
   const rows: Row[] = [];
   if (existing) {
     if (details.cancelled === true) rows.push({ text: 'Wait cancelled · original nonblocking question remains pending', color: 'dim', compact: true });

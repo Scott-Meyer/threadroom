@@ -33,7 +33,7 @@ try {
     if (scenario === 'receipt') { binding().commit({ questionId: question.details.id, text: 'Two', optionIndex: 1 }); assert.equal(sends.length, 1); }
     let blockingResult;
     if (scenario === 'blocking-receipt') {
-      const waiting = api.blocking.execute('wait-existing', { questionId: question.details.id }, undefined, () => {}, ctx);
+      const waiting = api.blocking.execute('wait-existing', { questions: [{ questionId: question.details.id }] }, undefined, () => {}, ctx);
       await new Promise((resolve) => setImmediate(resolve));
       binding().commit({ questionId: question.details.id, text: 'Promoted answer', optionIndex: 1 });
       blockingResult = await waiting; assert.equal(sends.length, 0);
@@ -52,7 +52,7 @@ try {
     await emit('turn_end'); await emit('agent_settled');
     const expectedSends = scenario === 'receipt' ? 1 : 0; assert.equal(sends.length, expectedSends);
     if (scenario === 'blocking-receipt') {
-      await assert.rejects(api.blocking.execute('retry-wait', { questionId: question.details.id }, undefined, () => {}, ctx), { code: 'storage_unconfirmed' });
+      await assert.rejects(api.blocking.execute('retry-wait', { questions: [{ questionId: question.details.id }] }, undefined, () => {}, ctx), { code: 'storage_unconfirmed' });
     }
     const branchSize = manager.getEntries().length;
     const blocked = await create('new-after-fault'); assert.equal(blocked.details.status, 'storage_unconfirmed'); assert.equal(manager.getEntries().length, branchSize);

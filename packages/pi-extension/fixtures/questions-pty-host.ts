@@ -78,7 +78,7 @@ export default function(pi: any) {
         ] } }];
         else if (!results.some((message: any) => message.toolCallId === 'PROMOTE_C')) {
           const pendingC = results.find((message: any) => message.toolCallId === 'NATIVE_C');
-          content = [{ type: 'toolCall', id: 'PROMOTE_C', name: 'ask_user_question', arguments: { questionId: pendingC.details.id, blocking: true } }];
+          content = [{ type: 'toolCall', id: 'PROMOTE_C', name: 'ask_user_question', arguments: { questions: [{ questionId: pendingC.details.id }], blocking: true } }];
         }
         else if (feedback.length) { log({ event: 'provider_feedback', feedback }); content = [{ type: 'text', text: 'TEST_FEEDBACK_CONSUMED' }]; stopReason = 'stop'; }
         else { content = [{ type: 'text', text: 'TEST_AI_CONTINUED' }]; stopReason = 'stop'; }

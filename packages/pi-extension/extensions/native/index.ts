@@ -452,7 +452,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
     const saved = project(ctx);
     const status = saved.answers.has(id) ? 'answered' : 'pending';
     return result({ id, sessionId: state.sessionId, status,
-      ...(status === 'pending' && options.waitToolName ? { waitWith: { tool: options.waitToolName, questionId: id, blocking: true } } : {}),
+      ...(status === 'pending' && options.waitToolName ? { waitWith: { tool: options.waitToolName, questions: [{ questionId: id }], blocking: true } } : {}),
       ...((projectionError || displayError) ? { presentationError: projectionError || displayError } : {}),
       pending: saved.pending.map((question) => ({ id: question.id, question: question.prompt.question.slice(0, 160) })) });
   }

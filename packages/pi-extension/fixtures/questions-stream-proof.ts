@@ -60,13 +60,16 @@ export default function(pi: any) {
       const error = text(renderBlockingAskResult({ content: [{ type: 'text', text: 'TEST unsupported host\nTEST_BLOCKING_CAUSE_LAST' }] }, { expanded: false, isPartial: false }, theme, { ...context, isError: true }));
       assert.match(error, /Question request failed/); assert.doesNotMatch(error, /cancelled|declined/);
       assert.match(text(renderBlockingAskResult(result, { expanded: false, isPartial: true }, theme, context)), /Reply update/);
-      const referenceArgs = { questionId: question.id }, referenceContext: any = { ...context, args: referenceArgs };
+      const referenceArgs = { questions: [{ questionId: question.id }] }, referenceContext: any = { ...context, args: referenceArgs };
       assert.match(text(renderBlockingAskCall(referenceArgs, theme, referenceContext)), /Wait for existing question/);
       assert.match(text(renderBlockingAskCall(referenceArgs, theme, { ...referenceContext, expanded: true })), /Existing question identity:\nask-TEST_ACTUAL_QUESTION_ID/);
+      const historicalReference = { questionId: question.id }, historicalContext: any = { ...context, args: historicalReference };
+      assert.match(text(renderBlockingAskCall(historicalReference, theme, historicalContext)), /Wait for existing question/);
       const releasedWait = { content: [{ type: 'text', text: '{"cancelled":true}' }], details: { groupId: `native:${question.id}`, questionId: question.id,
         sessionId: question.sessionId, waitStatus: 'cancelled', cancelled: true, answers: [] } };
       const releasedText = text(renderBlockingAskResult(releasedWait, { expanded: false, isPartial: false }, theme, referenceContext));
       assert.match(releasedText, /Question wait cancelled/); assert.match(releasedText, /original nonblocking question remains pending/); assert.doesNotMatch(releasedText, /Questionnaire cancelled/);
+      assert.match(text(renderBlockingAskResult(releasedWait, { expanded: false, isPartial: false }, theme, historicalContext)), /Question wait cancelled/);
       checks.push('Blocking summaries preserve original question/option positions, partial/cancel/error distinction, open notes and null-aligned previews; referenced async waits retain identity and truthful release copy.');
 
       for (const call of [renderAsyncAskCall(prompt, theme), renderBlockingAskCall(args, theme)]) assert.doesNotMatch(text(call), /call:|group:|q:/);
