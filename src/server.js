@@ -33,7 +33,7 @@ export function createThreadroomServer(store, { websiteHandler = null, allowedOr
       }
 
       if (url.pathname === '/api/health' && request.method === 'GET') return json(response, 200, {
-        ok: true, service: 'threadroom', apiVersion: 1, website: !!websiteHandler, ...runtimeIdentity
+        ok: true, service: 'threadroom', apiVersion: 2, website: !!websiteHandler, ...runtimeIdentity
       });
       if (url.pathname === '/api/tree' && request.method === 'GET') {
         const nodes = store.listNodes().map(({ presentation, response: savedResponse, body: savedBody, ...summary }) => ({
@@ -43,9 +43,12 @@ export function createThreadroomServer(store, { websiteHandler = null, allowedOr
       }
       if ((url.pathname === '/api/nodes' || url.pathname === '/api/ask') && request.method === 'POST') {
         const input = await body(request);
+        // A blocking ask is still publication first, but malformed transport
+        // options must not turn a rejected request into a durable question.
+        const wait = url.pathname === '/api/ask' ? waitOptions(input) : null;
         const published = store.createNode(input, request.headers['idempotency-key']);
-        if (input.wait && url.pathname === '/api/ask') {
-          waitForResponse(request, response, store, published.node.id, { published, timeoutMs: input.wait.timeoutMs || 60000 });
+        if (wait) {
+          waitForResponse(request, response, store, published.node.id, { published, timeoutMs: wait.timeoutMs });
           return;
         }
         return json(response, published.deduplicated ? 200 : 201, published);
@@ -111,7 +114,26 @@ async function body(request) {
     }
     chunks.push(chunk);
   }
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+  const value = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw clientError('Request body must be a JSON object');
+  return value;
+}
+
+function waitOptions(input) {
+  if (!Object.hasOwn(input, 'wait') || input.wait === undefined) return null;
+  const wait = input.wait;
+  if (!wait || typeof wait !== 'object' || Array.isArray(wait)) throw clientError('wait must be an object');
+  const timeoutMs = wait.timeoutMs ?? 60_000;
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw clientError('timeoutMs must be a non-negative number');
+  }
+  return { timeoutMs: Math.min(timeoutMs, 120_000) };
+}
+
+function clientError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
 }
 
 function json(response, status, value) {

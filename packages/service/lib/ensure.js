@@ -37,9 +37,12 @@ function probe(baseUrl, expectedStorageId, timeoutMs = 1000) {
         let body;
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { return finish({ status: 'incompatible', reason: 'health response was not JSON' }); }
-        if (response.statusCode === 200 && body?.ok === true && body.service === 'threadroom' && body.apiVersion === 1 &&
+        if (response.statusCode === 200 && body?.ok === true && body.service === 'threadroom' && body.apiVersion === 2 &&
             body.website === true && body.storageId === expectedStorageId) return finish({ status: 'healthy', health: body });
-        finish({ status: 'incompatible', reason: 'service identity, API version, website, or storage does not match', health: body });
+        const reason = body?.service === 'threadroom' && body?.apiVersion !== 2
+          ? `API version ${body?.apiVersion ?? 'missing'} is incompatible; restart the detached Threadroom service for API version 2`
+          : 'service identity, API version, website, or storage does not match';
+        finish({ status: 'incompatible', reason, health: body });
       });
     });
     call.on('error', () => finish({ status: 'unavailable' }));

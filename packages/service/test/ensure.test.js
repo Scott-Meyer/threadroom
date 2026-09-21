@@ -46,7 +46,7 @@ test('concurrent starters publish one compatible detached API and website with t
   const second = createThreadroomServiceEnsurer({ baseUrl, database, spawnProcess: launch });
   const [a, b] = await Promise.all([first.ensure(), second.ensure()]);
   assert.equal(launches, 1); assert.equal(a.storageId, first.storageId); assert.equal(b.storageId, first.storageId);
-  assert.equal(a.website, true); assert.equal(a.apiVersion, 1); assert.equal(options.detached, true); assert.equal(options.windowsHide, true);
+  assert.equal(a.website, true); assert.equal(a.apiVersion, 2); assert.equal(options.detached, true); assert.equal(options.windowsHide, true);
   assert.equal(options.cwd, directory); assert.deepEqual(commandArgs.slice(1, 4), ['serve', '--database', database]);
   assert.ok(existsSync(database));
   assert.deepEqual(await health(baseUrl), a);
@@ -103,6 +103,23 @@ test('an occupied endpoint with the wrong runtime or store is rejected without l
   const managed = createThreadroomServiceEnsurer({ baseUrl: `http://127.0.0.1:${server.address().port}`,
     database: join(directory, 'records.sqlite'), spawnProcess() { launches++; throw new Error('must not launch'); } });
   await assert.rejects(managed.ensure(), { code: 'incompatible_service' });
+  assert.equal(launches, 0);
+});
+
+test('an older detached Threadroom API is rejected with a restart instruction', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'threadroom-old-api-')); t.after(() => rm(directory, { recursive: true, force: true }));
+  const database = join(directory, 'records.sqlite');
+  const storageId = createHash('sha256').update(database).digest('hex').slice(0, 24);
+  const server = createServer((_request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ ok: true, service: 'threadroom', apiVersion: 1, website: true, storageId }));
+  });
+  await new Promise((resolve, reject) => server.listen(0, '127.0.0.1', resolve).once('error', reject));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  let launches = 0;
+  const managed = createThreadroomServiceEnsurer({ baseUrl: `http://127.0.0.1:${server.address().port}`, database,
+    spawnProcess() { launches++; throw new Error('must not launch'); } });
+  await assert.rejects(managed.ensure(), (error) => error.code === 'incompatible_service' && /restart.*API version 2/i.test(error.message));
   assert.equal(launches, 0);
 });
 

@@ -3,8 +3,9 @@ import { ThreadroomClient } from '../../public/client.js';
 
 // A generic API consumer: all content/artwork is captured on publication.
 // Repeating this command with unchanged source recovers the same test nodes.
-const api = new ThreadroomClient(process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310');
-const ui = (process.env.THREADROOM_UI_URL || 'http://127.0.0.1:4311').replace(/\/$/, '');
+const apiUrl = (process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310').replace(/\/$/, '');
+const api = new ThreadroomClient(apiUrl);
+const ui = (process.env.THREADROOM_UI_URL || apiUrl).replace(/\/$/, '');
 const key = process.env.PLAYGROUND_KEY || 'interaction-playground-v3';
 const author = { name: 'Threadroom test author', id: 'threadroom-interaction-demo', role: 'Synthetic examples requested by Scott' };
 const root = await api.publish({ title: 'Interaction playground · TEST questions (notes-safe)', body: 'Synthetic interaction examples, not MistFall team requests or project approvals. Explore moving parts, keyboard controls, overlapping objects, multiple choice, picture choices, and drawing. Every question retains independent written notes / ask-back / rejection / Save controls. Three actual questions also nest inside one another.', author }, `${key}:root`);

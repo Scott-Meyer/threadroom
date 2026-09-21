@@ -4,7 +4,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, readdir, rm, readFile, stat, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const exec = promisify(execFile);
@@ -95,7 +95,12 @@ test('the packed service runs outside the checkout and recovers one store across
   const apiUrl = await api.ready;
   assert.deepEqual((await json(apiUrl + '/api/tree')).nodes, [], 'Installed service must not silently seed fake requests');
   const database = api.logs().match(/Durable records: (.+)/)?.[1];
-  assert.ok(database && isAbsolute(database) && database.startsWith(home), 'Default store must be stable user data, not cwd');
+  const databaseFromHome = database ? relative(home, database) : '';
+  assert.ok(
+    database && isAbsolute(database) && databaseFromHome && !isAbsolute(databaseFromHome) &&
+      databaseFromHome !== '..' && !databaseFromHome.startsWith(`..${sep}`),
+    'Default store must be stable user data within the isolated home, not cwd or a sibling path'
+  );
   const ui = runtime(bin, ['ui', '--api-url', apiUrl, '--port', '0'], { cwd: secondCwd, env }); processes.push(ui);
   const uiUrl = await ui.ready;
   assert.equal((await json(uiUrl + '/threadroom-config.json')).apiBaseUrl, apiUrl);

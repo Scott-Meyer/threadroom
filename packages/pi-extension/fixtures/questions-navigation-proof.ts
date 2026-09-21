@@ -169,6 +169,51 @@ export default function(pi: any) {
       assert.equal(editor.getText(), 'kept');
       custom.dispose();
 
+      // Legacy terminals spell essential native keys as Ctrl chords; none may
+      // become a global shortcut. Identical configured shortcuts retain the
+      // primary focus-toggle route instead of being swallowed by collapse.
+      for (const [shortcut, input, name] of [
+        ['ctrl+h', '\b', 'Backspace'], ['ctrl+i', '\t', 'Tab'],
+        ['ctrl+j', '\n', 'line feed'], ['ctrl+m', '\r', 'Enter'], ['ctrl+[', '\x1b', 'Escape'],
+      ] as const) {
+        focus = editor;
+        const aliasHost = createQuestionHost(context, { focusToggleKey: shortcut, collapseKey: false });
+        aliasHost.enqueue({ id: `NATIVE_${name}`, mode: 'async', questions: [question(`native-${name}`)], commit() {} }); await Promise.resolve();
+        const nativeBeforeAlias = nativeKeys.length;
+        assert.equal(send(input), undefined); assert.equal(focus, editor);
+        assert.deepEqual(nativeKeys.slice(nativeBeforeAlias), [input], `${shortcut} configuration cannot steal native ${name}`);
+        aliasHost.dispose();
+      }
+      for (const [focusKey, collapseKey, input, name] of [
+        ['escape', 'esc', '\x1b', 'Escape'], ['enter', 'return', '\r', 'Enter'],
+      ] as const) {
+        focus = editor;
+        const aliasPair = createQuestionHost(context, { focusToggleKey: focusKey, collapseKey });
+        aliasPair.enqueue({ id: `ALIASED_${name}`, mode: 'async', questions: [question(`aliased-${name}`)], commit() {} }); await Promise.resolve();
+        const nativeBeforeAlias = nativeKeys.length;
+        assert.equal(send(input), undefined); assert.equal(focus, editor);
+        assert.deepEqual(nativeKeys.slice(nativeBeforeAlias), [input], `${focusKey}/${collapseKey} aliases cannot consume native ${name}`);
+        aliasPair.dispose();
+      }
+
+      for (const alias of ['control+g', 'constructor+g', '__proto__+g']) {
+        focus = editor;
+        const unsupportedAlias = createQuestionHost(context, { focusToggleKey: alias, collapseKey: false });
+        unsupportedAlias.enqueue({ id: `UNSUPPORTED_${alias}`, mode: 'async', questions: [question(`unsupported-${alias}`)], commit() {} }); await Promise.resolve();
+        const nativeBeforeAlias = nativeKeys.length;
+        assert.equal(send('g'), undefined); assert.equal(focus, editor);
+        assert.deepEqual(nativeKeys.slice(nativeBeforeAlias), ['g'], `${alias} cannot degrade into a plain-key shortcut`);
+        unsupportedAlias.dispose();
+      }
+
+      focus = editor;
+      const identical = createQuestionHost(context, { focusToggleKey: 'shift+ctrl+g', collapseKey: 'ctrl+shift+g' });
+      identical.enqueue({ id: 'IDENTICAL', mode: 'async', questions: [question('identical')], commit() {} }); await Promise.resolve();
+      assert.equal(send('\x1b[103;6u')?.consume, true); const identicalSurface = focus;
+      assert.notEqual(identicalSurface, editor, 'equivalent reordered shortcuts still enter the question pane');
+      assert.equal(send('\x1b[103;6u')?.consume, true); assert.equal(focus, editor, 'equivalent reordered shortcuts still return to Chat');
+      identical.dispose();
+
       focus = editor;
       const disabled = createQuestionHost(context, { focusToggleKey: false, collapseKey: false });
       disabled.enqueue({ id: 'OFF', mode: 'async', questions: [question('off')], commit() {} }); await Promise.resolve();

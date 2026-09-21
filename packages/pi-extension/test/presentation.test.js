@@ -8,7 +8,6 @@ import { stripVTControlCharacters } from 'node:util';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
 
 // This is a host-boundary check, not a replacement Pi or a helper-string test.
 // Set THREADROOM_PI_SDK_ROOT to an installed pi-coding-agent package when Pi
@@ -23,13 +22,9 @@ const host = async (path) => import(pathToFileURL(resolve(sdk, path)).href);
 
 async function fixture(t, { staleApiAlias = false } = {}) {
   const directory = await mkdtemp(resolve(tmpdir(), 'threadroom-pi-presentation-'));
-  const reservation = createServer();
-  reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
-  const port = reservation.address().port;
-  await new Promise((done) => reservation.close(done));
-  const url = `http://127.0.0.1:${port}`;
+  let url;
   const child = spawn(process.execPath, [resolve(root, 'src/main.js')], {
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), THREADROOM_SERVE_UI: '0',
+    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', THREADROOM_SERVE_UI: '0',
       THREADROOM_DB: resolve(directory, 'records.sqlite') }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -49,7 +44,11 @@ async function fixture(t, { staleApiAlias = false } = {}) {
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
   await deadline(new Promise((done, reject) => {
-    child.stdout.on('data', (data) => { log = (log + data).slice(-16000); if (log.includes('is ready at')) done(); });
+    child.stdout.on('data', (data) => {
+      log = (log + data).slice(-16000);
+      const ready = log.match(/is ready at (http:\/\/[^\s]+)/);
+      if (ready) { url = ready[1]; done(); }
+    });
     child.stderr.on('data', (data) => { log = (log + data).slice(-16000); });
     child.once('error', reject);
     child.once('exit', (code, signal) => reject(new Error(`Service exited (${code}/${signal}): ${log}`)));

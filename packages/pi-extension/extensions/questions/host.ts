@@ -41,11 +41,32 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
   let chat = false, chatFrom: string | undefined, origin: any;
   const collapsed = new Set<string>(), widgetKey = 'private-question-surface';
   // An editor loan is safe only when raw input can reclaim the focus-toggle key.
-  // Ordinary Tab is reserved even if a caller accidentally configures it.
+  // Legacy terminals report several native keys as Ctrl chords, so those
+  // spellings cannot safely become global shortcuts.
   const hasTerminalInput = typeof context.ui.onTerminalInput === 'function';
-  const safeShortcut = (value: unknown) => typeof value === 'string' && !!value.trim() && value.trim().toLowerCase() !== 'tab' ? value.trim() : false;
-  const collapseKey = hasTerminalInput ? safeShortcut(options.collapseKey === undefined ? 'ctrl+]' : options.collapseKey) : false;
+  const shortcutIdentity = (value: string) => {
+    const parts = value.toLowerCase().split('+').map((part) => part.trim());
+    const authoredKey = parts.pop();
+    const keyAliases: Record<string, string> = { esc: 'escape', return: 'enter' };
+    const key = authoredKey && (keyAliases[authoredKey] || authoredKey);
+    const order: Record<string, number> = { ctrl: 0, alt: 1, shift: 2, super: 3 };
+    if (!key || parts.some((part) => !Object.prototype.hasOwnProperty.call(order, part)) || new Set(parts).size !== parts.length) return false;
+    return [...parts.sort((left, right) => order[left] - order[right]), key].join('+');
+  };
+  const safeShortcut = (value: unknown) => {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    const normalized = shortcutIdentity(value);
+    // Ctrl+H/I/J/M/[ are indistinguishable from Backspace, Tab, line feed,
+    // Enter and Escape respectively on legacy terminal input.
+    const nativeAliases = new Set(['backspace', 'tab', 'enter', 'escape', 'ctrl+h', 'ctrl+i', 'ctrl+j', 'ctrl+m', 'ctrl+[']);
+    return normalized && !nativeAliases.has(normalized) ? normalized : false;
+  };
+  const configuredCollapseKey = hasTerminalInput ? safeShortcut(options.collapseKey === undefined ? 'ctrl+]' : options.collapseKey) : false;
   const focusToggleKey = hasTerminalInput ? safeShortcut(options.focusToggleKey === undefined ? 'shift+tab' : options.focusToggleKey) : false;
+  // Focus toggling is the primary route. If both options name the same shortcut,
+  // keep that route reachable instead of letting the earlier collapse branch win.
+  const collapseKey = configuredCollapseKey && focusToggleKey
+    && configuredCollapseKey === focusToggleKey ? false : configuredCollapseKey;
   const model = new QuestionModel(() => { if (!disposed) { tui?.requestRender(); schedule(); } });
   const hasBlocker = () => model.tabs().some((tab) => tab.mode === 'blocking');
   const tabKey = (tab: { key: string; incarnation: number }) => JSON.stringify([tab.key, tab.incarnation]);

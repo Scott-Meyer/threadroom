@@ -6,14 +6,18 @@ export class ThreadroomError extends Error {
   }
 }
 
+function serviceUrl(value) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.href.includes('?') || url.href.includes('#')) {
+    throw new Error('Threadroom needs HTTP(S) addresses without embedded credentials, query strings, or fragments.');
+  }
+  return url.href.replace(/\/$/, '');
+}
+
 export class ThreadroomClient {
   constructor(baseUrl = 'http://127.0.0.1:4310', { uiUrl = baseUrl, timeoutMs = 15000, beforeConnect } = {}) {
-    const url = new URL(baseUrl);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-      throw new Error('Threadroom needs an HTTP(S) address without embedded credentials.');
-    }
-    this.baseUrl = url.href.replace(/\/$/, '');
-    this.uiUrl = new URL(uiUrl).href.replace(/\/$/, '');
+    this.baseUrl = serviceUrl(baseUrl);
+    this.uiUrl = serviceUrl(uiUrl);
     this.timeoutMs = timeoutMs;
     this.beforeConnect = beforeConnect;
     this.lifetime = new AbortController();

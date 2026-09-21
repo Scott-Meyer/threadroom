@@ -1,5 +1,6 @@
 import { ThreadroomClient } from './client.js';
 import { mountPresentation } from './presentations.js';
+import { threadIdFromPath, threadPath } from './routes.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -8,7 +9,7 @@ const initials = (name = '?') => name.replace(/\([^)]*\)/g,'').trim().split(/\s+
 const time = (iso) => new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(new Date(iso));
 const statusLabels = { outstanding:'NEEDS YOUR ANSWER', answered:'ANSWERED', waiting_on_team:'WAITING ON TEAM', deferred:'DEFERRED', rejected:'REJECTED' };
 const responseLabels = { answer:'Answered', reject:'Rejected with reason', clarification:'Asked back', defer:'Deferred', team_reply:'Team replied' };
-const state = { nodes:[], byId:new Map(), children:new Map(), expanded:new Set(), selected:null, zoomId:null, view:'outline', query:'', dialogParentId:null, drafts:new Map(), saving:new Map(), readGeneration:0 };
+const state = { nodes:[], byId:new Map(), children:new Map(), expanded:new Set(), selected:null, zoomId:null, view:'outline', query:'', dialogParentId:null, drafts:new Map(), saving:new Map(), readGeneration:0, readingId:null };
 let client;
 let cleanupCanvas = () => {};
 
@@ -96,14 +97,17 @@ function zoom(id) {
 
 async function openNode(id,{navigate=true}={}) {
   const generation = ++state.readGeneration;
+  state.readingId = id;
   try {
     const result = await client.read(id);
     if (generation !== state.readGeneration) return;
     state.selected = result;
     for (const ancestor of result.ancestors) state.expanded.add(ancestor.id);
-    if (navigate && location.pathname !== `/threads/${id}`) history.pushState({id},'',`/threads/${id}`);
+    const path = threadPath(id);
+    if (navigate && location.pathname !== path) history.pushState({id},'',path);
     renderOutline(); renderRoom(result);
   } catch (error) { toast(error.message,true); }
+  finally { if (generation === state.readGeneration) state.readingId = null; }
 }
 
 function renderRoom(result) {
@@ -214,7 +218,6 @@ function responsePayload(draft) {
 }
 async function saveResponse(id) {
   if (state.saving.has(id)) return;
-  const originGeneration = state.readGeneration;
   const draft = draftFor(id);
   const payload = responsePayload(draft);
   const serialized = JSON.stringify(payload);
@@ -234,17 +237,43 @@ async function saveResponse(id) {
   state.saving.delete(id);
   const currentDraft = draftFor(id);
   const hasNewerDraft = JSON.stringify(responsePayload(currentDraft)) !== serialized;
+  let draftCleanupFailed = false;
   if (hasNewerDraft) { currentDraft.attempt = null; keepDraft(id,currentDraft); }
-  else { state.drafts.delete(id); localStorage.removeItem(`threadroom:node-draft:${id}`); }
+  else {
+    state.drafts.delete(id);
+    // Browser storage is an optional draft convenience. Once the server has
+    // committed the response, a storage policy/quota failure must not interrupt
+    // the visible success path or resurrect the submitted draft on re-render.
+    try { localStorage.removeItem(`threadroom:node-draft:${id}`); }
+    catch {
+      draftCleanupFailed = true;
+      state.drafts.set(id,{kind:'answer',body:'',html:'',fallback:'',proposal:null});
+    }
+  }
   // A committed save never owns navigation or edits made after the submitted snapshot.
   if (state.selected?.node.id === id) {
     const currentButton = $('#saveResponseButton'); currentButton.disabled = false;
     currentButton.textContent = hasNewerDraft ? 'Save newer draft →' : 'Save response →';
     $('#draftState').textContent = hasNewerDraft ? 'Submitted snapshot saved; newer draft is still unsaved' : 'Response saved to history';
-    if (!hasNewerDraft && state.readGeneration === originGeneration) await openNode(id,{navigate:false});
+    if (!hasNewerDraft) {
+      // Returning to this node while its save was in flight renders the submitted
+      // draft again. Clear that visible composer locally without incrementing the
+      // read generation: a slower navigation to another node may already be in
+      // flight and must retain ownership. Refresh saved history only when idle.
+      renderRoom(state.selected);
+      if (state.readingId === null) await openNode(id,{navigate:false});
+    }
   }
-  try { await refreshTree(); toast(hasNewerDraft ? 'Submitted response saved. Your newer draft was kept.' : 'Saved. Your response is in this branch.'); }
-  catch { toast('Response saved. Outline will catch up when reconnected.'); }
+  try {
+    await refreshTree();
+    toast(draftCleanupFailed
+      ? 'Response saved, but the stale browser draft could not be removed. This page will keep it cleared; check browser storage before reloading.'
+      : hasNewerDraft ? 'Submitted response saved. Your newer draft was kept.' : 'Saved. Your response is in this branch.', draftCleanupFailed);
+  } catch {
+    toast(draftCleanupFailed
+      ? 'Response saved, but browser draft cleanup failed and the outline will catch up when reconnected.'
+      : 'Response saved. Outline will catch up when reconnected.', draftCleanupFailed);
+  }
 }
 
 function showPublish(parentId) {
@@ -271,8 +300,9 @@ $('#newThreadForm').addEventListener('submit',async (event) => {
   for (const ancestor of result.ancestors) state.expanded.add(ancestor.id);
   if (!result.node.parentId) state.zoomId = null;
   ++state.readGeneration;
+  state.readingId = null;
   state.selected = result;
-  history.pushState({id:result.node.id},'',`/threads/${result.node.id}`);
+  history.pushState({id:result.node.id},'',threadPath(result.node.id));
   renderSidebar(); renderOutline(); renderRoom(result);
   toast('Node added here');
 });
@@ -283,7 +313,7 @@ $('#searchInput').addEventListener('input',(event) => { state.query = event.targ
 $('#refreshButton').addEventListener('click',async () => { try { await refreshTree(); if (state.selected) await openNode(state.selected.node.id,{navigate:false}); toast('Caught up with saved history'); } catch (error) { toast(error.message,true); } });
 // Sidebar views are global; an outline zoom must not hide incoming questions in another branch.
 $$('.nav-item').forEach((button) => button.addEventListener('click',() => { state.view = button.dataset.view; state.zoomId = null; $$('.nav-item').forEach((other) => other.classList.toggle('active',other === button)); renderOutline(); }));
-window.addEventListener('popstate',() => { const id = location.pathname.match(/^\/threads\/([^/]+)$/)?.[1]; if (id) openNode(id,{navigate:false}); });
+window.addEventListener('popstate',() => { const id = threadIdFromPath(location.pathname); if (id) openNode(id,{navigate:false}); });
 function toast(message,error=false) {
   const element = $('#toast'); element.textContent = message; element.classList.toggle('error',error); element.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => element.classList.remove('show'),3500);
 }
@@ -307,7 +337,7 @@ async function start() {
   const config = await fetch('/threadroom-config.json').then((response) => response.json());
   client = new ThreadroomClient(config.apiBaseUrl);
   await refreshTree();
-  const pathId = location.pathname.match(/^\/threads\/([^/]+)$/)?.[1];
+  const pathId = threadIdFromPath(location.pathname);
   const id = pathId && state.byId.has(pathId) ? pathId : state.nodes.find((node) => node.id === 'q_silhouette')?.id || childrenOf(null)[0]?.id;
   for (const root of childrenOf(null)) state.expanded.add(root.id);
   if (id) await openNode(id);

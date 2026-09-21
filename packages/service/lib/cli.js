@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -129,11 +130,22 @@ function generateConfig(options) {
     }, directory, 'api')],
     ['local.threadroom.ui', plist('local.threadroom.ui', ['ui', '--api-url', url, '--port', String(uiPort)], environment, directory, 'ui')]
   ];
-  // Validate all XML before any write. Only the requested output directory is created.
+  // Validate every destination before any write. Atomic replacement avoids
+  // following symlinks or hard links that happen to occupy the final name.
   mkdirSync(output, { recursive: true, mode: 0o700 });
-  for (const [label, contents] of jobs) {
-    const path = join(output, `${label}.plist`);
-    writeFileSync(path, contents, { mode: 0o600 });
+  const destinations = jobs.map(([label, contents]) => ({ contents, path: join(output, `${label}.plist`) }));
+  for (const { path } of destinations) {
+    const existing = lstatSync(path, { throwIfNoEntry: false });
+    if (existing && !existing.isFile()) throw new Error(`Refusing non-regular launchd configuration destination: ${path}`);
+  }
+  for (const { contents, path } of destinations) {
+    const temporary = join(output, `.${randomUUID()}.plist.tmp`);
+    try {
+      writeFileSync(temporary, contents, { flag: 'wx', mode: 0o600 });
+      renameSync(temporary, path);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
     console.log(path);
   }
   console.log(`Configuration only; no jobs installed or started. Before approved activation, prepare private directories:\n  ${directory}\n  ${dirname(database)}\nNode: ${process.execPath}\nCLI: ${cliPath}`);

@@ -36,7 +36,7 @@ button { cursor: pointer; }
 .icon-button { width: 37px; height: 37px; color: #6e746f; font-size: 21px; }
 .icon-button:hover { background: #e9e9e3; }
 .avatar { width: 34px; height: 34px; display: grid; place-items: center; margin-left: 3px; border-radius: 50%; color: white; background: #a66d52; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
-.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 228px 340px minmax(550px, 1fr); }
+.workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 228px 340px minmax(0, 1fr); }
 .sidebar { display: flex; flex-direction: column; min-height: 0; padding: 22px 13px 14px; background: #f3f2ed; border-right: 1px solid #dad9d2; }
 .nav-label, .eyebrow { margin: 0 0 8px; color: #959890; font: 500 9px DM Mono, monospace; letter-spacing: 1.55px; }
 .nav-label { padding: 0 11px; }
@@ -171,7 +171,7 @@ dialog::backdrop { background: rgba(25,30,27,.4); backdrop-filter: blur(3px); }
 .draft-state { font-size: 10px; }
 .dialog-card label, .dialog-card input, .dialog-card textarea, .dialog-copy { font-size: 12px; }
 .toast { font-size: 12px; }
-.workspace { grid-template-columns: 205px 365px minmax(510px,1fr); }
+.workspace { grid-template-columns: 205px 365px minmax(0,1fr); }
 .outline-guide { margin: 26px 11px; color: #9a9f97; font-size: 10px; line-height: 1.7; }
 .outline-guide strong { color: #7f8b81; font-size: 11px; font-weight: 600; }
 .outline-guide p { margin: 5px 0; }
@@ -243,8 +243,8 @@ dialog::backdrop { background: rgba(25,30,27,.4); backdrop-filter: blur(3px); }
 .response-authoring label { display: block; margin-top: 9px; font-size: 10px; }
 .response-authoring textarea { margin-top: 5px; border: 1px solid #dfe4d7; border-radius: 5px; font: 10px DM Mono,monospace; }
 .live-dot.disconnected { background: #be9970; box-shadow: 0 0 0 4px #f0e7da; }
-@media (max-width: 1040px) {
-  .workspace { grid-template-columns: 205px 305px minmax(490px,1fr); }
+@media (max-width: 1079px) {
+  .workspace { grid-template-columns: 180px minmax(260px,305px) minmax(0,1fr); }
   .comparison-grid { grid-template-columns: 1fr; }
   .option-card { display: grid; grid-template-columns: 150px 1fr; }
   .option-image { height: 100%; aspect-ratio: auto; }

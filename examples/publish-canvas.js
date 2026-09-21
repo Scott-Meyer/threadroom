@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-const baseUrl = process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310';
+const baseUrl = (process.env.THREADROOM_API_URL || 'http://127.0.0.1:4310').replace(/\/$/, '');
+const uiUrl = (process.env.THREADROOM_UI_URL || baseUrl).replace(/\/$/, '');
 const html = await readFile(new URL('./creature-canvas.html', import.meta.url), 'utf8');
 // One API call resolves/creates every ancestor and durably captures the authored document.
 const response = await fetch(`${baseUrl}/api/ask`, {
@@ -18,4 +19,4 @@ const response = await fetch(`${baseUrl}/api/ask`, {
 });
 const result = await response.json();
 if (!response.ok) throw new Error(JSON.stringify(result));
-console.log(JSON.stringify({ id: result.node.id, parentId: result.node.parentId, path: result.ancestors.map(({ title }) => title), website: `http://127.0.0.1:4311${result.url}`, deduplicated: result.deduplicated }, null, 2));
+console.log(JSON.stringify({ id: result.node.id, parentId: result.node.parentId, path: result.ancestors.map(({ title }) => title), website: `${uiUrl}${result.url}`, deduplicated: result.deduplicated }, null, 2));

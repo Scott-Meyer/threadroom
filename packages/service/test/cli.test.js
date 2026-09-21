@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,24 @@ test('configuration is review-only, absolute, escaped, and independent of shell 
     assert.ok(ui.includes('http://127.0.0.1:4410'));
     assert.ok(ui.includes('<string>ui</string>'));
     assert.ok(!ui.includes('<string>api</string>'));
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test('launchd configuration refuses symlink destinations without touching their targets', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'threadroom-config-link-'));
+  try {
+    const home = join(temporary, 'home');
+    const output = join(temporary, 'review');
+    const target = join(temporary, 'outside.txt');
+    mkdirSync(output);
+    writeFileSync(target, 'must survive');
+    symlinkSync(target, join(output, 'local.threadroom.api.plist'));
+
+    const result = invoke(['launchd-config', '--output-dir', output], home);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Refusing non-regular launchd configuration destination/);
+    assert.equal(readFileSync(target, 'utf8'), 'must survive');
+    assert.deepEqual(readdirSync(output), ['local.threadroom.api.plist']);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 

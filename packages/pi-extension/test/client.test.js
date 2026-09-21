@@ -6,6 +6,21 @@ import { Socket } from 'node:net';
 import { once } from 'node:events';
 import { ThreadroomClient } from '../src/client.js';
 
+test('client accepts only credential-free HTTP(S) API and UI addresses', () => {
+  assert.throws(() => new ThreadroomClient('file:///tmp/threadroom'), /HTTP\(S\)/);
+  assert.throws(() => new ThreadroomClient('http://user:secret@127.0.0.1:4310'), /credentials/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310', { uiUrl: 'javascript:alert(1)' }), /HTTP\(S\)/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310?token=secret'), /query strings/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310#private'), /fragments/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310/?'), /query strings/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310/#'), /fragments/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310', { uiUrl: 'https://user:secret@example.test' }), /credentials/);
+  assert.throws(() => new ThreadroomClient('http://127.0.0.1:4310', { uiUrl: 'https://example.test/?view=private' }), /query strings/);
+  const client = new ThreadroomClient('http://127.0.0.1:4310', { uiUrl: 'https://example.test/threadroom/' });
+  assert.equal(client.uiUrl, 'https://example.test/threadroom');
+  return client.close();
+});
+
 async function server(t, handler) {
   const service = createServer(handler);
   service.listen(0, '127.0.0.1'); await once(service, 'listening');

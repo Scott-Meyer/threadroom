@@ -16,7 +16,7 @@ for (const directory of ['src', 'public']) {
     filter: async (source) => {
       const name = basename(source);
       if (/(^|[.\-])(test|spec)([.\-]|$)/i.test(name)
-        || /\.(sqlite(?:3)?|db)(?:-(?:wal|shm))?$/i.test(name)
+        || /\.(sqlite(?:3)?|db)(?:-(?:wal|shm|journal))?$/i.test(name)
         || ['.DS_Store', 'node_modules', 'test', 'tests', 'examples', 'data', 'pi', 'dev'].includes(name)) return false;
       const info = await lstat(source);
       if (info.isSymbolicLink()) throw new Error(`Runtime resources cannot depend on symlinks: ${source}`);

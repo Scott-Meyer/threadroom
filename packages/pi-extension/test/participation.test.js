@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { ThreadroomClient, ThreadroomError } from '../src/client.js';
 import { Participation } from '../src/participation.js';
@@ -24,22 +23,25 @@ function deferred() {
 }
 async function service(t) {
   const directory = await mkdtemp(join(tmpdir(), 'threadroom-pi-'));
-  const reservation = createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
-  const port = reservation.address().port; await new Promise((r) => reservation.close(r));
-  let child, childLog = '';
+  let child, childLog = '', client;
   async function start() {
     childLog = '';
     child = spawn(process.execPath, [fileURLToPath(new URL('../../../src/main.js', import.meta.url))], {
-      env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), THREADROOM_SERVE_UI: '0', THREADROOM_DB: join(directory, 'records.sqlite') },
+      env: { ...process.env, HOST: '127.0.0.1', PORT: '0', THREADROOM_SERVE_UI: '0', THREADROOM_DB: join(directory, 'records.sqlite') },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    await deadline(new Promise((resolve, reject) => {
-      child.stdout.on('data', (data) => { childLog = (childLog + data).slice(-16000);
-        if (childLog.includes('is ready at')) resolve(); });
+    const url = await deadline(new Promise((resolve, reject) => {
+      child.stdout.on('data', (data) => {
+        childLog = (childLog + data).slice(-16000);
+        const ready = childLog.match(/is ready at (http:\/\/[^\s]+)/);
+        if (ready) resolve(ready[1]);
+      });
       child.stderr.on('data', (data) => { childLog = (childLog + data).slice(-16000); });
       child.once('error', reject);
       child.once('exit', (code, signal) => reject(new Error(`Service exited (${code}/${signal}): ${childLog}`)));
     }), 3000, () => `Service startup deadline: ${childLog}`);
+    if (client) { client.baseUrl = url; client.uiUrl = url; }
+    return url;
   }
   async function stop() {
     // A child that exited by signal still has exitCode=null. Waiting for its
@@ -54,13 +56,14 @@ async function service(t) {
       throw error;
     }
   }
-  const client = new ThreadroomClient(`http://127.0.0.1:${port}`), participants = new Set();
-  fixtureParticipants.set(client, participants);
+  const participants = new Set();
   t.after(async () => {
     try { await deadline(Promise.all([...participants].map((room) => room.close())), 3000, () => 'Participation shutdown deadline'); }
-    finally { try { await client.close(); } finally { try { await stop(); } finally { await rm(directory, { recursive: true, force: true }); } } }
+    finally { try { await client?.close(); } finally { try { await stop(); } finally { await rm(directory, { recursive: true, force: true }); } } }
   });
-  await start();
+  const url = await start();
+  client = new ThreadroomClient(url);
+  fixtureParticipants.set(client, participants);
   return { client, start, stop };
 }
 function participant(t, client, options = {}) {
@@ -98,6 +101,20 @@ test('an authored async ask continues, receives a correlated reply, and replay d
   await resumed.consume(responseEvent, new AbortController().signal);
   assert.equal(resumedDeliveries.length, 0); // transcript receipt survives an interrupted checkpoint
   assert.equal((await client.read(second.node.id)).node.status, 'outstanding');
+});
+
+test('checkpoint failure cannot turn a confirmed publication into failure or prevent its watch', { timeout: 10000 }, async (t) => {
+  const { client } = await service(t); const delivered = deferred();
+  const room = participant(t, client, {
+    checkpoint() { throw new Error('checkpoint storage unavailable'); },
+    deliver: (receipt) => delivered.resolve(receipt),
+  });
+  const asked = await room.publish({ question: 'Stay durable when local recovery storage fails?' }, { key: 'checkpoint-failure' });
+  assert.equal((await client.read(asked.node.id)).node.id, asked.node.id, 'publication was durably confirmed');
+  assert.deepEqual(asked.participation.checkpoint, { status: 'failed', error: 'checkpoint storage unavailable' });
+  assert.ok(asked.participation.watching.includes(asked.node.id), 'the confirmed publication is still watched');
+  const saved = await client.respond(asked.node.id, { body: 'The live watch still works.', author: human });
+  assert.equal((await delivered.promise).responseId, saved.responseId);
 });
 
 test('waiting returns the saved answer; timeout/cancel leave a watch and durable question for later feedback', { timeout: 10000 }, async (t) => {
@@ -172,11 +189,15 @@ test('a read finishing after wait timeout cannot silently consume the later answ
 
 test('service disconnect/restart catches up, and an ambiguous saved write is recovered with the same key', { timeout: 15000 }, async (t) => {
   const host = await service(t); const { client } = host; const delivery = deferred();
-  let savedWrite;
+  let firstSavedWrite;
   const realPublish = client.publish.bind(client); let interrupt = true;
   client.publish = async (input, options) => {
-    savedWrite = await realPublish(input, options);
-    if (interrupt) { interrupt = false; throw new ThreadroomError('Lost the write receipt', { ambiguous: true }); }
+    const savedWrite = await realPublish(input, options);
+    if (interrupt) {
+      interrupt = false;
+      firstSavedWrite = savedWrite;
+      throw new ThreadroomError('Lost the write receipt', { ambiguous: true });
+    }
     return savedWrite;
   };
   const room = participant(t, client, { deliver: (receipt) => delivery.resolve(receipt) });
@@ -185,7 +206,7 @@ test('service disconnect/restart catches up, and an ambiguous saved write is rec
     key = error.retryKey; return error.ambiguous && key === 'stable-publish';
   });
   const recovered = await room.publish({ question: 'Recover rather than ask twice?' }, { key });
-  assert.equal(recovered.node.id, savedWrite.node.id); assert.equal(recovered.deduplicated, true);
+  assert.equal(recovered.node.id, firstSavedWrite.node.id); assert.equal(recovered.deduplicated, true);
   const priorState = room.snapshot(); await room.close(); await host.stop(); await host.start();
   const saved = await client.respond(recovered.node.id, { body: 'Answered while the asker was gone.', author: human });
   const resumed = participant(t, client, { state: priorState, deliver: (receipt) => delivery.resolve(receipt) }); resumed.start();

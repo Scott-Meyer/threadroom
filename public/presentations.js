@@ -8,11 +8,29 @@ const MAX_JSON_DEPTH = 32;
 function isJson(value, depth = 0, budget = { remaining: MAX_MESSAGE_BYTES }) {
   if (--budget.remaining < 0 || depth > MAX_JSON_DEPTH) return false;
   if (value === null || typeof value === 'boolean') return true;
-  if (typeof value === 'string') return value.length <= MAX_MESSAGE_BYTES;
+  if (typeof value === 'string') {
+    // Count every occurrence, not only each distinct object. Structured clone
+    // preserves shared identity, while JSON serialization expands every use.
+    budget.remaining -= value.length;
+    return budget.remaining >= 0;
+  }
   if (typeof value === 'number') return Number.isFinite(value);
   if (typeof value !== 'object') return false;
-  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
-  return Object.values(value).every((item) => isJson(item, depth + 1, budget));
+  if (Array.isArray(value)) {
+    // JSON.stringify walks through array length, including holes. Reject sparse
+    // or impossibly large arrays before serialization can monopolize the host.
+    if (value.length > budget.remaining) return false;
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index) || !isJson(value[index], depth + 1, budget)) return false;
+    }
+    return true;
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+  for (const [key, item] of Object.entries(value)) {
+    budget.remaining -= key.length;
+    if (budget.remaining < 0 || !isJson(item, depth + 1, budget)) return false;
+  }
+  return true;
 }
 
 function proposalFromMessage(data) {

@@ -1,24 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { once, EventEmitter } from 'node:events';
+import { runInNewContext } from 'node:vm';
 import { ThreadStore } from '../src/store.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createWebsiteHandler } from '../src/site.js';
+import { renderPresentationDocument } from '../src/presentations.js';
 import { createThreadroomServer } from '../src/server.js';
 import { ThreadroomClient } from '../public/client.js';
+import { threadIdFromPath, threadPath } from '../public/routes.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ThreadroomClient as ParticipationClient } from '../packages/pi-extension/src/client.js';
 import { Participation } from '../packages/pi-extension/src/participation.js';
 
 async function runningService(database, options = {}) {
-  const store = new ThreadStore(database);
-  const server = createThreadroomServer(store, options);
+  const { Store = ThreadStore, ...serverOptions } = options;
+  const store = new Store(database);
+  const server = createThreadroomServer(store, serverOptions);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const { port } = server.address();
@@ -34,9 +39,13 @@ async function runningService(database, options = {}) {
 }
 
 async function request(service, path, options = {}) {
+  const { deadlineMs = 10_000, ...fetchOptions } = options;
+  const deadline = AbortSignal.timeout(deadlineMs);
+  const signal = fetchOptions.signal ? AbortSignal.any([fetchOptions.signal, deadline]) : deadline;
   const response = await fetch(`${service.url}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+    ...fetchOptions,
+    signal,
+    headers: { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) }
   });
   const result = await response.json();
   assert.ok(response.ok, JSON.stringify(result));
@@ -156,10 +165,14 @@ test('ask-back, team clarification, and deferral retain distinct responsibilitie
   }
 });
 
-async function nextStreamEvent(reader) {
+async function nextStreamEvent(reader, timeoutMs = 5000) {
   let buffer = '';
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const expired = new Promise((_, reject) => timeout.addEventListener('abort', () => {
+    reject(new Error(`Timed out after ${timeoutMs}ms waiting for the next SSE event`));
+  }, { once: true }));
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await Promise.race([reader.read(), expired]);
     if (done) throw new Error('Event stream closed before an event');
     buffer += new TextDecoder().decode(value);
     const blocks = buffer.split('\n\n');
@@ -170,6 +183,27 @@ async function nextStreamEvent(reader) {
     }
   }
 }
+
+test('network test helpers fail on bounded deadlines instead of hanging the suite', async t => {
+  const hangingServer = createServer(() => {});
+  hangingServer.listen(0, '127.0.0.1');
+  await once(hangingServer, 'listening');
+  t.after(async () => {
+    hangingServer.closeAllConnections();
+    await new Promise((resolve) => hangingServer.close(resolve));
+  });
+  const url = `http://127.0.0.1:${hangingServer.address().port}`;
+  await assert.rejects(request({ url }, '/', { deadlineMs: 25 }), { name: 'TimeoutError' });
+  await assert.rejects(nextStreamEvent({ read: () => new Promise(() => {}) }, 25), /Timed out after 25ms/);
+});
+
+test('browser thread routes round-trip one encoded node identity', () => {
+  for (const id of ['review.v1', '../app.js', 'review/section?x#y%z', '雪 😀']) {
+    assert.equal(threadIdFromPath(threadPath(id)), id);
+  }
+  assert.equal(threadIdFromPath('/threads/%ZZ'), null);
+  assert.equal(threadIdFromPath('/threads/a/b'), null);
+});
 
 test('one deep question call can block on a live answer, and that answer can own deeper threads', async () => {
   const service = await runningService(':memory:');
@@ -242,6 +276,23 @@ test('timing out a blocking ask leaves its question available for a later respon
   } finally { await service.close(); }
 });
 
+test('malformed request envelopes cannot leave a durable publication behind', async () => {
+  const service = await runningService(':memory:');
+  try {
+    for (const [path, input] of [
+      ['/api/nodes', []],
+      ['/api/ask', { question: 'Must not persist', wait: false }],
+      ['/api/ask', { question: 'Also must not persist', wait: { timeoutMs: -1 } }],
+    ]) {
+      const response = await fetch(`${service.url}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input)
+      });
+      assert.equal(response.status, 400);
+    }
+    assert.deepEqual(service.store.listNodes(), []);
+  } finally { await service.close(); }
+});
+
 test('upgrading the initial spike preserves original IDs, presentation meaning, and response retry receipts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'threadroom-upgrade-'));
   const database = join(directory, 'records.sqlite');
@@ -273,6 +324,39 @@ test('upgrading the initial spike preserves original IDs, presentation meaning, 
   }
 });
 
+test('authored proposals post only stable, bounded JSON snapshots', () => {
+  const document = renderPresentationDocument({ kind: 'html-v1', html: '<main>test</main>' });
+  const script = document.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(script, 'presentation bridge is present');
+  const messages = [];
+  class RealmTextEncoder extends TextEncoder {}
+  const context = { window: { parent: { postMessage(message) { messages.push(message); } } }, TextEncoder: RealmTextEncoder, messages };
+  runInNewContext(script, context);
+  for (const [source, error] of [
+    ['const value = {}; Object.defineProperty(value, "toJSON", { value: () => ({ changed: NaN }) }); window.Threadroom.propose(value)', /custom toJSON/],
+    ['const value = {}; Object.defineProperty(value, "answer", { enumerable: true, get: () => 42 }); window.Threadroom.propose(value)', /accessors/],
+    ['const value = {}; value.self = value; window.Threadroom.propose(value)', /cycles/],
+    ['window.Threadroom.propose([, 42])', /sparse/],
+    ['window.Threadroom.propose({ answer: NaN })', /finite JSON numbers/],
+    ['window.Threadroom.propose(new Date())', /only JSON objects and arrays/],
+  ]) assert.throws(() => runInNewContext(`(() => { ${source} })()`, context), error);
+  runInNewContext(`(() => {
+    const value = new Proxy({ answer: 42 }, { get(target, key, receiver) {
+      return key === 'answer' ? NaN : Reflect.get(target, key, receiver);
+    }});
+    window.Threadroom.propose(value);
+  })()`, context);
+  assert.equal(JSON.stringify(messages.at(-1).values), '{"answer":42}', 'the posted proposal is the validated descriptor snapshot');
+  runInNewContext(`
+    Array.isArray = () => false;
+    WeakSet = class { constructor() { throw new Error('replaced WeakSet'); } };
+    TextEncoder.prototype.encode = () => ({ length: 0 });
+    window.Threadroom.propose([{ nested: true }]);
+  `, context);
+  assert.equal(JSON.stringify(messages.at(-1).values), '[{"nested":true}]', 'authored global changes cannot alter validation');
+  assert.throws(() => runInNewContext(`window.Threadroom.propose('x'.repeat(70000))`, context), /64 KiB/);
+});
+
 test('an independently hosted UI uses the API and authored question/answer records without database access', async () => {
   let website;
   const ui = createServer((req, res) => website(req, res));
@@ -286,8 +370,56 @@ test('an independently hosted UI uses the API and authored question/answer recor
     const page = await fetch(uiUrl);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /<title>Threadroom<\/title>/);
+    const dottedThreadRoute = await fetch(`${uiUrl}/threads/review.v1`);
+    assert.equal(dottedThreadRoute.status, 200);
+    assert.match(await dottedThreadRoute.text(), /<title>Threadroom<\/title>/);
+    const malformedThreadRoute = await fetch(`${uiUrl}/threads/%ZZ`);
+    assert.equal(malformedThreadRoute.status, 200, 'malformed escapes still reach the SPA fallback');
+    assert.match(await malformedThreadRoute.text(), /<title>Threadroom<\/title>/);
     const configuration = await fetch(`${uiUrl}/threadroom-config.json`).then((response) => response.json());
     assert.equal(configuration.apiBaseUrl, service.url);
+
+    const nodesBeforeInvalidIds = service.store.listNodes().map(({ id }) => id);
+    const invalidIds = [
+      { id: '.', error: /URL dot segment/ },
+      { id: '..', error: /URL dot segment/ },
+      { id: '', error: /nonempty string/ },
+      { id: null, error: /nonempty string/ },
+      { id: 42, error: /nonempty string/ },
+      { id: String.fromCharCode(0xd800), error: /well-formed Unicode/ },
+      { id: `bad${String.fromCharCode(0)}`, error: /control characters/ },
+    ];
+    for (const { id, error } of invalidIds) {
+      const response = await fetch(`${service.url}/api/threads`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: uiUrl },
+        body: JSON.stringify({ id, title: 'Unroutable ID', project: 'Routing', questions: [{ prompt: 'This must not persist.' }] }) });
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, error);
+    }
+    for (const { id, error } of [
+      { id: null, error: /nonempty string/ },
+      { id: String.fromCharCode(0xd800), error: /well-formed Unicode/ },
+    ]) {
+      const invalidQuestion = await fetch(`${service.url}/api/threads`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: uiUrl },
+        body: JSON.stringify({ id: 'would-have-committed', title: 'Invalid child ID', project: 'Routing',
+          questions: [{ id, prompt: 'This must not persist.' }] }) });
+      assert.equal(invalidQuestion.status, 400);
+      assert.match((await invalidQuestion.json()).error, error);
+    }
+    assert.deepEqual(service.store.listNodes().map(({ id }) => id), nodesBeforeInvalidIds, 'ID validation happens before any durable project, thread, or question write');
+
+    for (const reservedId of ['../app.js', 'review/section?x#y%z']) {
+      await request(service, '/api/threads', {
+        method: 'POST', headers: { Origin: uiUrl }, body: JSON.stringify({
+          id: reservedId, title: `Reserved route ${reservedId}`, project: 'Routing', questions: [{ prompt: 'Does this caller-supplied route round-trip?' }]
+        })
+      });
+      const reserved = await request(service, `/api/nodes/${encodeURIComponent(reservedId)}`);
+      assert.equal(reserved.result.url, `/threads/${encodeURIComponent(reservedId)}`);
+      const reservedRoute = await fetch(`${uiUrl}${reserved.result.url}`);
+      assert.equal(reservedRoute.status, 200);
+      assert.match(reservedRoute.headers.get('content-type'), /^text\/html/);
+      assert.match(await reservedRoute.text(), /<title>Threadroom<\/title>/);
+    }
 
     const published = await request(service, '/api/nodes', {
       method: 'POST', headers: { Origin: uiUrl }, body: JSON.stringify({
@@ -314,12 +446,20 @@ test('an independently hosted UI uses the API and authored question/answer recor
 });
 
 test('a publish retry recovers its captured visual presentation even after the source image disappears', async () => {
-  const filename = `retry-${Date.now()}.svg`;
-  const source = new URL(`../public/assets/${filename}`, import.meta.url);
+  const fixture = await mkdtemp(join(tmpdir(), 'threadroom-captured-asset-'));
+  const sourceDirectory = join(fixture, 'src');
+  const assetsDirectory = join(fixture, 'public', 'assets');
+  const filename = 'retry.svg';
+  const source = join(assetsDirectory, filename);
+  const isolatedStoreModule = join(sourceDirectory, 'store.mjs');
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"><title>Original captured study</title></svg>';
-  const service = await runningService(':memory:');
+  let service;
   try {
+    await Promise.all([mkdir(sourceDirectory, { recursive: true }), mkdir(assetsDirectory, { recursive: true })]);
+    await writeFile(isolatedStoreModule, await readFile(new URL('../src/store.js', import.meta.url), 'utf8'));
     await writeFile(source, svg);
+    const { ThreadStore: IsolatedThreadStore } = await import(pathToFileURL(isolatedStoreModule));
+    service = await runningService(':memory:', { Store: IsolatedThreadStore });
     const input = JSON.stringify({ path: ['Visual history'], question: 'Which study?', presentation: {
       kind: 'comparison-v1', revision: 'captured-r1', options: [{ id: 'a', label: 'Original', image: `/assets/${filename}` }]
     }});
@@ -331,7 +471,10 @@ test('a publish retry recovers its captured visual presentation even after the s
     const image = retry.result.node.presentation.options[0].image;
     assert.match(image, /^data:image\/svg\+xml;base64,/);
     assert.equal(Buffer.from(image.split(',')[1], 'base64').toString(), svg);
-  } finally { await rm(source, { force: true }); await service.close(); }
+  } finally {
+    if (service) await service.close();
+    await rm(fixture, { recursive: true, force: true });
+  }
 });
 
 
@@ -378,6 +521,38 @@ test('top placement, saved response context, and answer requests use one node sh
     assert.equal(titleChanged.status, 409);
     const countsAfterConflict = await request(service, `/api/nodes/${top.node.id}`);
     assert.equal(countsAfterConflict.result.counts.nodes, 3);
+  } finally { await service.close(); }
+});
+
+test('idempotent retries compare semantic JSON content while preserving older receipts', async () => {
+  const service = await runningService(':memory:');
+  try {
+    const first = await request(service, '/api/nodes', {
+      method: 'POST', headers: { 'Idempotency-Key': 'canonical-publish' },
+      body: JSON.stringify({ question: 'Does object key order change identity?',
+        author: { name: 'Mara', identity: { team: 'Art', id: 7 } },
+        presentation: { kind: 'text-v1', metadata: { phase: 'review', round: 2 } } })
+    });
+    const publishRetry = await request(service, '/api/nodes', {
+      method: 'POST', headers: { 'Idempotency-Key': 'canonical-publish' },
+      body: JSON.stringify({ presentation: { metadata: { round: 2, phase: 'review' }, kind: 'text-v1' },
+        author: { identity: { id: 7, team: 'Art' }, name: 'Mara' },
+        question: 'Does object key order change identity?' })
+    });
+    assert.equal(publishRetry.result.node.id, first.result.node.id);
+    assert.equal(publishRetry.result.deduplicated, true);
+
+    const answer = await request(service, `/api/nodes/${first.result.node.id}/respond`, {
+      method: 'POST', headers: { 'Idempotency-Key': 'canonical-response' },
+      body: JSON.stringify({ body: 'No.', selections: [{ id: 'proof', value: { accepted: true, score: 1 } }] })
+    });
+    const answerRetry = await request(service, `/api/nodes/${first.result.node.id}/respond`, {
+      method: 'POST', headers: { 'Idempotency-Key': 'canonical-response' },
+      body: JSON.stringify({ selections: [{ value: { score: 1, accepted: true }, id: 'proof' }], body: 'No.' })
+    });
+    assert.equal(answerRetry.result.node.id, answer.result.node.id);
+    assert.equal(answerRetry.result.deduplicated, true);
+    assert.equal(service.store.listNodes().length, 2);
   } finally { await service.close(); }
 });
 

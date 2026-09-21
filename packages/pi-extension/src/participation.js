@@ -18,10 +18,24 @@ export class Participation {
     const unconfirmed = [...this.pending.values()].map((p) => p.sequence - 1);
     return { watches: [...this.watches], cursor: Math.min(this.cursor, ...unconfirmed) };
   }
-  save() { if (!this.closed) this.checkpoint(this.snapshot()); }
+  save() {
+    if (this.closed) return false;
+    try {
+      this.checkpoint(this.snapshot());
+      this.checkpointError = undefined;
+      return true;
+    } catch (error) {
+      // A checkpoint is recovery metadata, never the durable publication itself.
+      // Keep the live watch running and expose the persistence failure to callers
+      // rather than turning a confirmed write into an ambiguous failed request.
+      this.checkpointError = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+  }
   adjacent() { return { connection: this.status, watching: [...this.watches].slice(-12),
     ...(this.watches.size > 12 ? { otherWatches: this.watches.size - 12 } : {}),
-    unconfirmedDeliveries: this.pending.size }; }
+    unconfirmedDeliveries: this.pending.size,
+    ...(this.checkpointError ? { checkpoint: { status: 'failed', error: this.checkpointError } } : {}) }; }
   start() {
     if (this.closed || !this.watches.size) return;
     this.controller?.abort();

@@ -7,7 +7,18 @@ import { EventEmitter } from 'node:events';
 
 const now = () => new Date().toISOString();
 const parse = (value, fallback = null) => value ? JSON.parse(value) : fallback;
-const fingerprint = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const hashJson = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const canonicalJson = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]));
+  }
+  return value;
+};
+const fingerprint = (value) => hashJson(canonicalJson(value));
+// request_hash existed before canonical fingerprints. Accept the legacy hash
+// for an unchanged retry so upgrading does not invalidate durable receipts.
+const legacyFingerprint = hashJson;
 const assetsDir = fileURLToPath(new URL('../public/assets/', import.meta.url));
 
 // One node primitive. Requests, response context, and authored content are independent capabilities.
@@ -69,17 +80,18 @@ export class ThreadStore {
       parentId = parent.parent_id;
     }
     const children = this.db.prepare('SELECT * FROM nodes WHERE parent_id = ? ORDER BY created_at, rowid').all(nodeId).map((child) => this.#node(child));
-    return { node, ancestors, children, counts: this.#counts(nodeId), url: `/threads/${nodeId}` };
+    return { node, ancestors, children, counts: this.#counts(nodeId), url: `/threads/${encodeURIComponent(nodeId)}` };
   }
 
   createNode(input, key) {
     const normalized = this.#normalizeInput(input);
     const requestHash = fingerprint(normalized);
-    // Previously published receipts survive the removal of the structural kind field.
+    // Previously published receipts survive both canonical hashing and the
+    // removal of the structural kind field.
     const { expectsAnswer, ...content } = normalized;
     const oldHashes = (expectsAnswer ? ['question'] : ['thread', 'note'])
-      .map((kind) => fingerprint({ kind, ...content }));
-    const existing = this.#existing(key, requestHash, ...oldHashes);
+      .flatMap((kind) => [fingerprint({ kind, ...content }), legacyFingerprint({ kind, ...content })]);
+    const existing = this.#existing(key, requestHash, legacyFingerprint(normalized), ...oldHashes);
     if (existing) return { ...this.getNode(existing.id), createdAncestorIds: [], deduplicated: true };
     let createdAncestorIds = [];
     let id;
@@ -111,8 +123,10 @@ export class ThreadStore {
     const title = requestedTitle || body.split('\n')[0].slice(0, 100) || selections.map((selection) => selection.label || selection.id).join(', ') || (kind === 'defer' ? 'Deferred for later' : 'Authored response');
     const content = { nodeId, kind, body, selections, author, presentation: input.presentation || null };
     const normalized = { ...content, expectsAnswer, title };
-    const existing = this.#existing(key, fingerprint(normalized), fingerprint(content),
-      !expectsAnswer ? `legacy:${fingerprint({ nodeId, kind, body, selections })}` : null);
+    const existing = this.#existing(key, fingerprint(normalized), legacyFingerprint(normalized),
+      fingerprint(content), legacyFingerprint(content),
+      !expectsAnswer ? `legacy:${fingerprint({ nodeId, kind, body, selections })}` : null,
+      !expectsAnswer ? `legacy:${legacyFingerprint({ nodeId, kind, body, selections })}` : null);
     if (existing) {
       if (!!existing.expects_answer !== expectsAnswer || (requestedTitle && existing.title !== title)) throw new ConflictError('Idempotency-Key was already used for different content');
       return { ...this.getNode(existing.id), responseId: existing.id, deduplicated: true, target: this.#node(this.#require(nodeId)) };
@@ -136,10 +150,14 @@ export class ThreadStore {
 
   // First-spike adapters use the same authority. No project/question hierarchy is imposed on nodes.
   createThread(input) {
+    routableId(input, 'thread id');
     const title = text(input.title, 'title');
     const project = text(input.project, 'project');
     const questions = input.questions?.length ? input.questions : [input.question];
-    for (const question of questions) text(question?.prompt, 'question prompt');
+    for (const question of questions) {
+      routableId(question, 'question id');
+      text(question?.prompt, 'question prompt');
+    }
     let id;
     this.#atomic(() => {
       const { parentId } = this.#resolvePath([project], input.author);
@@ -155,6 +173,7 @@ export class ThreadStore {
 
   addQuestion(threadId, input) {
     this.#require(threadId);
+    routableId(input, 'question id');
     text(input.prompt, 'prompt');
     this.#atomic(() => {
       const id = this.#insert({ id: input.id, parentId: threadId, expectsAnswer: true, title: input.prompt,
@@ -424,6 +443,15 @@ function text(value, name, required = true) {
   if (value == null && !required) return '';
   if (typeof value !== 'string' || (required && !value.trim())) throw new InputError(`${name} must be ${required ? 'a nonempty' : 'a'} string`);
   return value.trim();
+}
+
+function routableId(input, name) {
+  if (input == null || !Object.hasOwn(input, 'id')) return;
+  const value = input.id;
+  if (typeof value !== 'string' || !value.length) throw new InputError(`${name} must be a nonempty string`);
+  if (!value.isWellFormed()) throw new InputError(`${name} must contain well-formed Unicode`);
+  if (value === '.' || value === '..') throw new InputError(`${name} cannot be a URL dot segment`);
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value)) throw new InputError(`${name} cannot contain control characters`);
 }
 
 export class InputError extends Error { statusCode = 400; }
