@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -30,13 +30,10 @@ try {
   for (const path of [
     'package/extensions/index.ts',
     'package/LICENSE',
-    'package/node_modules/threadroom-service/package.json',
-    'package/node_modules/threadroom-service/bin/threadroom-service.js',
-    'package/node_modules/threadroom-service/lib/ensure.js',
-    'package/node_modules/threadroom-service/lib/paths.js',
-    'package/node_modules/threadroom-service/dist/src/main.js',
-    'package/node_modules/threadroom-service/dist/public/index.html',
+    'package/runtime/threadroom-service.tgz',
   ]) assert.ok(archive.includes(path), `Packed artifact is missing ${path}`);
+  assert.equal(archive.some(path => path.startsWith('package/node_modules/threadroom-service/')), false,
+    'Installing private questions must not also install the app.');
 
   const installRoot = join(directory, 'install');
   const installed = spawnSync('npm', ['install', '--prefix', installRoot, '--ignore-scripts', '--legacy-peer-deps', '--offline', tarball], {
@@ -48,8 +45,16 @@ try {
   const installedManifest = JSON.parse(await readFile(join(installedRoot, 'package.json'), 'utf8'));
   assert.equal(installedManifest.name, 'threadroom-pi');
   assert.equal(installedManifest.version, packedPackage.version);
-  const bundledManifest = JSON.parse(await readFile(join(installedRoot, 'node_modules', 'threadroom-service', 'package.json'), 'utf8'));
-  assert.equal(bundledManifest.name, 'threadroom-service');
+  assert.equal(installedManifest.dependencies?.['threadroom-service'], undefined);
+  assert.equal(installedManifest.optionalDependencies?.['threadroom-service'], undefined);
+  await assert.rejects(stat(join(installedRoot, 'node_modules/threadroom-service')), { code: 'ENOENT' });
+  const runtimeDirectory = join(agentDir, 'threadroom', 'runtime');
+  await assert.rejects(stat(runtimeDirectory), { code: 'ENOENT' });
+  // Private startup works even without the inert archive. An absent optional
+  // runtime can never prevent the private question tool from being loaded.
+  const serviceArchive = join(installedRoot, 'runtime/threadroom-service.tgz');
+  const heldArchive = join(directory, 'held-service.tgz');
+  await rename(serviceArchive, heldArchive);
 
   const { loadExtensions } = await import(pathToFileURL(join(sdk, 'dist/core/extensions/loader.js')).href);
   const { SessionManager } = await import(pathToFileURL(join(sdk, 'dist/core/session-manager.js')).href);
@@ -79,7 +84,50 @@ try {
   }] }, undefined, undefined, context), { code: 'unsupported_host' });
   for (const handler of extension.handlers.get('session_shutdown') || []) await handler({}, context);
 
-  console.log(`Verified ${packedPackage.filename}: clean offline install, bundled service, installed Pi load, private tool, and default-off shared lane.`);
+  await assert.rejects(stat(runtimeDirectory), { code: 'ENOENT' });
+
+  // A missing optional runtime must remain a shared-lane failure, not disable
+  // private questions. Once supplied, the same activation can retry preparation.
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(join(agentDir, 'threadroom.json'), JSON.stringify({ shared: true }));
+  delete process.env.THREADROOM_API_URL;
+  delete process.env.THREADROOM_UI_URL;
+  delete process.env.THREADROOM_AUTO_START;
+  const database = join(directory, 'must-not-start.sqlite');
+  process.env.THREADROOM_DB = database;
+  const enabled = await loadExtensions([target], installRoot);
+  assert.deepEqual(enabled.errors, []);
+  const enabledExtension = enabled.extensions[0];
+  let enabledTools = [...enabledExtension.tools.keys()];
+  enabled.runtime.getActiveTools = () => [...enabledTools];
+  enabled.runtime.setActiveTools = names => { enabledTools = [...names]; };
+  enabled.runtime.appendEntry = () => {};
+  enabled.runtime.sendMessage = () => {};
+  enabled.runtime.getSessionName = () => undefined;
+  const warnings = [];
+  const enabledContext = { ...context, sessionManager: SessionManager.inMemory(installRoot),
+    ui: { setStatus() {}, notify(message) { warnings.push(message); } } };
+  for (const handler of enabledExtension.handlers.get('session_start') || []) await handler({}, enabledContext);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Shared Threadroom is unavailable.*Private questions remain available/);
+  assert.ok(enabledTools.includes('ask_user_question'));
+  await assert.rejects(stat(runtimeDirectory), { code: 'ENOENT' });
+  await assert.rejects(() => enabledExtension.tools.get('ask_user_question').definition.execute('missing-app-private-check', { questions: [{
+    question: 'Does the private tool remain independent?', options: [{ label: 'Yes' }, { label: 'No' }],
+  }] }, undefined, undefined, enabledContext), { code: 'unsupported_host' });
+  // Opt-in makes the runtime available, but does not start a server without a
+  // shared request or restored watch. Preparation uses only the shipped archive.
+  await rename(heldArchive, serviceArchive);
+  warnings.length = 0;
+  for (const handler of enabledExtension.handlers.get('session_start') || []) await handler({}, enabledContext);
+  assert.deepEqual(warnings, []);
+  assert.ok(enabledTools.includes('threadroom_ask'));
+  assert.ok((await stat(runtimeDirectory)).isDirectory(), 'Enabling shared Threadroom installs its runtime.');
+  const { createManagedThreadroomService } = await import(pathToFileURL(join(installedRoot, 'src/service-runtime.js')).href);
+  await createManagedThreadroomService({ baseUrl: 'http://127.0.0.1:4310', runtimeDirectory }).prepare();
+  await assert.rejects(stat(database), { code: 'ENOENT' });
+  for (const handler of enabledExtension.handlers.get('session_shutdown') || []) await handler({}, enabledContext);
+  console.log(`Verified ${packedPackage.filename}: offline private-only install, Pi load without app resources, and offline runtime installation only after shared opt-in.`);
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

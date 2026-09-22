@@ -5,7 +5,7 @@
 ## Before publishing
 
 1. Review the package README, MIT license, packed source, and whether the GitHub repository is ready for public visitors. A public npm package exposes its tarball even while its repository is private.
-2. Commit every release input. The gate covers `packages/pi-extension`, `packages/service`, `src`, and `public` because the adapter bundles the generated local service.
+2. Commit every release input. The gate covers `packages/pi-extension`, `packages/service`, `src`, and `public` because the adapter carries the generated local service archive for offline opt-in installation.
 3. Use Node 24 and identify the supported installed Pi package:
 
    ```sh
@@ -13,7 +13,7 @@
    npm run pi:release:check
    ```
 
-   This runs the Pi extension suite with the physical PTY flow, creates the real tarball, installs it offline without peer dependencies, checks the bundled service, loads the installed extension through Pi, confirms the shared lane stays off, and executes an npm publish dry run. It does not publish.
+   This runs the Pi extension suite with the physical PTY flow, creates the real tarball, installs it offline without peer dependencies or the app, loads private questions through Pi even without the service archive, verifies offline app installation only after shared opt-in, and executes an npm publish dry run. It does not publish.
 4. Confirm the personal npm account and two-factor authentication:
 
    ```sh

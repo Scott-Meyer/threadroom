@@ -1,5 +1,6 @@
 import { CONFIG_DIR_NAME, getAgentDir, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
+import { join } from 'node:path';
 import { ThreadroomClient } from '../src/client.js';
 import { Participation } from '../src/participation.js';
 import { renderAskCall, renderDiscussionCall, renderToolResult, renderFeedback, participationNotice } from './presentation/renderers.ts';
@@ -64,7 +65,8 @@ export default function threadroom(pi: ExtensionAPI) {
   function ensureSharedRuntime() {
     if (client) return;
     managedService = !configuredApiUrl && process.env.THREADROOM_AUTO_START !== '0'
-      ? createManagedThreadroomService({ baseUrl: apiUrl, databaseValue: process.env.THREADROOM_DB, invocationCwd: process.cwd() })
+      ? createManagedThreadroomService({ baseUrl: apiUrl, databaseValue: process.env.THREADROOM_DB, invocationCwd: process.cwd(),
+        runtimeDirectory: join(getAgentDir(), 'threadroom', 'runtime') })
       : undefined;
     client = new ThreadroomClient(apiUrl, { uiUrl, beforeConnect: managedService ? () => managedService!.ensure() : undefined });
     endpoints = { apiUrl: client.baseUrl, uiUrl: client.uiUrl };
@@ -101,6 +103,10 @@ export default function threadroom(pi: ExtensionAPI) {
     clearTimeout(navigationTimer); navigationTimer = undefined;
     const old = room; room = undefined; await old?.close();
     if (mine !== epoch) return;
+    // Reaching bind is explicit shared-feature admission. Private startup never
+    // installs the app; externally managed endpoints need no local app either.
+    await managedService?.prepare();
+    if (mine !== epoch || !sharedEnabled) return;
     context = ctx; paused = false; navigating = false; running = false;
     const sessionId = ctx.sessionManager.getSessionId();
     const entries = ctx.sessionManager.getBranch();
@@ -148,11 +154,15 @@ export default function threadroom(pi: ExtensionAPI) {
     sharedEnabled = config.enabled;
     for (const warning of config.warnings) ctx.ui.notify(`Threadroom configuration warning: ${warning}`, 'warning');
     if (!sharedEnabled) {
+      ++epoch;
       removeSharedTools(); ctx.ui.setStatus('threadroom', undefined);
       const old = room; room = undefined; await old?.close();
       return;
     }
-    await bind(ctx);
+    try { await bind(ctx); }
+    catch (error) {
+      ctx.ui.notify(`Shared Threadroom is unavailable: ${error instanceof Error ? error.message : String(error)} Private questions remain available.`, 'warning');
+    }
   });
   pi.on('session_shutdown', async () => {
     sharedEnabled = false; ++epoch; clearTimeout(navigationTimer); navigationTimer = undefined;

@@ -25,12 +25,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": ["extensions/", "src/", "scripts/", "README.md", "LICENSE"],
+  "files": ["extensions/", "src/", "scripts/", "runtime/", "README.md", "LICENSE"],
   "engines": { "node": ">=24" },
-  "dependencies": {
-    "threadroom-service": "0.1.0"
-  },
-  "bundleDependencies": ["threadroom-service"],
   "scripts": {
     "prepublishOnly": "node scripts/verify-release.js",
     "prepack": "node scripts/stage-service.js stage",

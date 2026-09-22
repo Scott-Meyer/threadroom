@@ -1,6 +1,6 @@
 # Threadroom for Pi
 
-Ask private questions without making the AI guess or stop useful independent work. `threadroom-pi` owns one `ask_user_question` tool with a shared input-area surface: questions block by default, while `blocking: false` leaves them open as the AI continues. The optional shared Threadroom lane is experimental, off by default, and never starts or contacts its bundled local service during private questions.
+Ask private questions without making the AI guess or stop useful independent work. `threadroom-pi` owns one `ask_user_question` tool with a shared input-area surface: questions block by default, while `blocking: false` leaves them open as the AI continues. The optional shared Threadroom lane is experimental, off by default, and never installs, starts, or contacts its local app during private questions.
 
 This is beta software. The private-question experience is usable and tested on Pi 0.86.x; shared discussions, remote deployment, authentication, and broader host compatibility are still evolving. Pi extensions execute with the same system access as Pi, so review packages before installing them.
 
@@ -56,11 +56,13 @@ The durable files are `~/.pi/agent/threadroom.json` (or Pi’s configured agent 
 
 ## Local development
 
-Private nonblocking questions need only normal interactive Pi—no Threadroom API, website, or patched SDK. The checkout command under Install isolates a trial from other extensions; preparing source does not reload a running session. Shared Threadroom tools lazily ensure the bundled local service only after that lane is explicitly enabled, unless an endpoint or startup opt-out assigns service ownership elsewhere.
+Private nonblocking questions need only normal interactive Pi—no Threadroom API, website, or patched SDK. The checkout command under Install isolates a trial from other extensions; preparing source does not reload a running session. Enabling shared Threadroom and reloading installs its local runtime offline; the first shared operation starts it. An explicit endpoint or startup opt-out leaves service ownership elsewhere and needs no local installation.
 
 For normal project loading, first exclude any other producer of `ask_user_question`; do not load duplicate implementations. In a trusted project, Pi’s project package entry overrides an inherited entry with the same npm identity, so a project-local `{ "source": "npm:@juicesharp/rpiv-ask-user-question", "autoload": false, "extensions": ["-index.ts"] }` excludes that package's sole producer without changing global settings. An empty `extensions` delta does not exclude it. This is configuration guidance, not automatic installation or activation. Coordinate reload only after the ordinary editor has focus.
 
-The packed adapter includes the local service runtime. After the shared lane is enabled, the first shared Threadroom request—or restoration of active shared watches—reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. Private questions alone never start it. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
+The packed adapter carries an inert service archive, not an npm dependency on the app. With shared Threadroom off, the app remains uninstalled. Enabling the shared lane and reloading installs that archive offline into Pi’s agent directory; installation does not start the service. The first shared Threadroom request—or restoration of active shared watches—then reuses a compatible service or starts a detached API + website at `http://127.0.0.1:4310`. The detached service uses stable per-user storage and survives Pi reload/shutdown. Concurrent Pi sessions share a startup lease; health checks bind compatibility to the API version, website capability, and selected database rather than adopting an unrelated port owner.
+
+Development packages remain symlinked to their working source. In this workspace, the enabled shared lane uses the live sibling service directly. For another machine, materialize the current working package with `npm pack` from its original workspace and install that artifact; it includes the offline archive without publishing anything. Copying only the raw extension directory still supports private questions, but does not carry the sibling app. Do not substitute a registry release for a development snapshot.
 
 After shared Threadroom is enabled through `/threadroom`, runtime/service configuration uses environment variables:
 
@@ -79,7 +81,7 @@ Shared tools use owned Node HTTP/HTTPS connections, not host `fetch` or its glob
 
 `threadroom_ask` publishes a plain question or authored interaction in one call and watches its replies in this session. It returns immediately unless `waitMs` is supplied. There is no required options list, header, or form layout. It is a separate shared capability, not an emulator of the native questionnaire schema.
 
-`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints. Enabled local use can start the bundled service; explicitly configured endpoints are only connected to, never started or replaced.
+`threadroom` covers ordinary contributions and replies, readable history, outline browsing, direct-node watches, and waiting on an existing question. Discussions can branch beneath any node, including an answer. Watches cover direct replies; a deeper branch can have its own watch. `/threadroom` shows the chosen API/website addresses, connectivity, and local participation. Connection errors also identify those endpoints. Enabled local use can install and start the optional service; explicitly configured endpoints are only connected to, never installed, started, or replaced.
 
 Pi shows readable questions, saved reply intent, and durable discussion links—not raw authored programs or JSON envelopes. Expanded views reveal more history and receipt identity. Saved text is literal terminal text, not executable controls or Markdown. The full machine-facing records remain unchanged.
 
@@ -107,4 +109,4 @@ Captured presentations are immutable today. An evolving job dashboard or two-way
 
 ## License
 
-The code distributed in this package, including its bundled local service runtime, is available under the [MIT License](LICENSE).
+The code distributed in this package, including its optional local service archive, is available under the [MIT License](LICENSE).
