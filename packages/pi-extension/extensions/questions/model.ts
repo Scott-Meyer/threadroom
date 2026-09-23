@@ -51,6 +51,11 @@ export class QuestionModel {
     return { outcome,
       require: (value: boolean) => this.require(group, value),
       answered: () => { if (this.groups.get(input.id) === group) this.remove(group, group.required ? 'answered' : undefined); },
+      /** Another surface settled this blocking group; it leaves exactly as if answered or cancelled here. */
+      settle: (result: QuestionResult) => {
+        if (this.groups.get(input.id) !== group || group.spec.mode !== 'blocking') return false;
+        this.remove(group, result.cancelled ? 'cancelled' : 'answered'); group.resolve!(result); return true;
+      },
       detach: () => { if (this.groups.get(input.id) !== group) return;
         this.remove(group, group.spec.mode === 'blocking' || group.required ? 'detached' : undefined); group.reject?.(detached()); } };
   }

@@ -399,7 +399,7 @@ export function createQuestionHost(context: any, options: QuestionHostOptions = 
       ensure();
       if (group.mode === 'blocking' && !hasBlocker()) modalPaneTab = displayKey();
       const handle = model.enqueue(group);
-      return { outcome: handle.outcome, detach: handle.detach, answered: handle.answered,
+      return { outcome: handle.outcome, detach: handle.detach, answered: handle.answered, settle: handle.settle,
         require(value: boolean) {
           if (value && !hasBlocker()) modalPaneTab = displayKey();
           handle.require(value);

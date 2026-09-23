@@ -17,7 +17,7 @@ export type HumanResponseV1 = Readonly<{
   answers: readonly Readonly<{ question: string; chose?: readonly string[]; wrote?: string; notes?: string }>[];
 }>;
 
-/** Known `via` values: `pi-tui`, `pi-rpc-dialog`; other hosts use `pi-<mode>-dialog`. */
+/** Known `via` values: `pi-tui`, `pi-rpc-dialog`, other `pi-<mode>-dialog`, and `presenter:<id>` (another extension's UI, self-named). */
 export function dialogVia(mode: string): string {
   return `pi-${mode}-dialog`;
 }

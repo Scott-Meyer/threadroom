@@ -46,7 +46,25 @@ Other extensions (advisors, hosts, history views) can learn what the person did 
   "answers": [{ "question": "Which direction?", "chose": ["Wide silhouette"], "wrote": "but softer edges", "notes": "..." }] }
 ```
 
-`outcome` is `answered`, `partial` (some questions skipped), or `cancelled` (the person dismissed it). Aborts, timeouts, and hosts without a UI are tool errors, never a `humanResponse`. `chose` lists AI-written suggestion labels the person picked; only `wrote` and `notes` are the person’s own words. `via` names the host surface (`pi-tui`, `pi-rpc-dialog`, or another `pi-<mode>-dialog`); an RPC client may be automated, and none of this verifies identity. Wait results with `already_*` statuses carry no new answer. Unknown `version` values should be ignored. Everything else in `details` and all result text are for the primary model and may change.
+`outcome` is `answered`, `partial` (some questions skipped), or `cancelled` (the person dismissed it). Aborts, timeouts, and hosts without a UI are tool errors, never a `humanResponse`. `chose` lists AI-written suggestion labels the person picked; only `wrote` and `notes` are the person’s own words. `via` names the host surface (`pi-tui`, `pi-rpc-dialog`, another `pi-<mode>-dialog`, or `presenter:<id>` for another extension’s UI); an RPC client or presenter is code that may be automated, and none of this verifies identity. Wait results with `already_*` statuses carry no new answer. Unknown `version` values should be ignored. Everything else in `details` and all result text are for the primary model and may change.
+
+### Showing questions in another UI
+
+A host extension in the same Pi process (for example a desktop app’s bridge) can show private questions in its own UI. Threadroom still saves answers, tracks pending and required state, and delivers feedback. The presenter only shows questions and returns what the person did. The terminal surface stays up too: the person can answer in either place, and the other copy is dismissed. Answers record `answeredBy.via: "presenter:<id>"`.
+
+```ts
+const presenter = { id: 'flightdeck', present(group) {
+  // group: { id, sessionId, mode: 'blocking' | 'async', required, questions: [{ id, question, header?, context?,
+  //   options: [{ label, description?, preview? }], multiSelect, notes, previewFormat }],
+  //   submit({ replies, cancelled? }), commit(reply), release(questionId) }
+  // reply: { questionId, choices?: [optionIndex], text?, notes? }
+  return { update({ required }) {}, dismiss(reason /* answered | cancelled | withdrawn */) {} }; // or nothing to decline
+} };
+pi.events.on('threadroom.questions.presenter.v1.discover', () => pi.events.emit('threadroom.questions.presenter.v1.register', presenter));
+pi.events.emit('threadroom.questions.presenter.v1.register', presenter);
+```
+
+Registering both ways makes load order irrelevant; re-registering the same `id` replaces it, and `...v1.unregister` with the `id` removes it. Blocking groups finish with `submit` (skipped questions are simply absent; `false` means it already finished elsewhere). An async question is saved with `commit`, which rejects if saving failed. `required` becomes true when the AI starts waiting on it, and `release` lets the person stop that wait without withdrawing the question. A presenter that throws only affects its own copy. The full contract is in `extensions/questions/presenters.ts`.
 
 ## Optional shared discussions
 
