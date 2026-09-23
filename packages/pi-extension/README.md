@@ -6,7 +6,7 @@ This is beta software. The private-question experience is usable and tested on P
 
 ## Install
 
-Requires Node 24 or newer. Install the explicit beta channel:
+Requires Node 22.22 or newer for private questions; the optional shared Threadroom service needs Node 24. Install the explicit beta channel:
 
 ```sh
 pi install npm:threadroom-pi@beta
