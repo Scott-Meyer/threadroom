@@ -17,7 +17,7 @@ const discussion = await room.read(asked.node.id); // content + replies in child
 
 ## Caller correlation
 
-`author` is captured as supplied JSON, including optional `id` and `sessionId` alongside `name`. These fields survive reads, tree/ancestor context, replies, and restart; they let an adapter correlate a durable interaction with its caller. They are opaque caller-provided metadata, not verified identity or access control. Submitted author metadata is part of new publication/response retry fingerprints, so retries retain the original metadata even if a different session resumes the interaction. Don't put credentials in it.
+`author` is captured as supplied JSON, including optional `id` and `sessionId` alongside `name`. These fields survive reads, tree/ancestor context, replies, and restart; they let an adapter correlate a durable interaction with its caller. For Pi callers, `sessionId` is Pi's own session ID—the ecosystem's shared way to refer to a session—so other tools can correlate without depending on Threadroom. They are opaque caller-provided metadata, not verified identity or access control. Submitted author metadata is part of new publication/response retry fingerprints, so retries retain the original metadata even if a different session resumes the interaction. Don't put credentials in it.
 
 ## Ask at any depth in one call
 

@@ -2,6 +2,10 @@
 
 A lasting, recursively nestable place for people and AI teammates to bring work, ask questions, answer, and branch the discussion—even from an answer. The conversation outlives the session that started it.
 
+## Where Threadroom fits
+
+Threadroom is for an AI asking a *person* something and keeping the answer: quick private questions, or larger discussions and decisions worth returning to. Live AI-to-AI conversation belongs in [Parley](https://github.com/Scott-Meyer/pi-parley); if that conversation produces something that should outlive the sessions, link to a Threadroom discussion. Work items belong in the project's tracker (Beads, Linear, …), linked from the discussion that produced them—Threadroom doesn't store tasks.
+
 ## Run it
 
 Requires **Node 24+**, with no packages to install.
