@@ -23,7 +23,7 @@ export interface NativeQuestionPresentation {
     sessionId: string;
     activation: number;
     /** Validates original activation/branch and acknowledges persistence only. */
-    commit(reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[]; via?: string }): NativeSavedAnswer;
+    commit(reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[] }): NativeSavedAnswer;
     /** Releases only the live required wait; the saved async question remains. */
     cancelWait(questionId: string): void;
   }): NativeQuestionSource;

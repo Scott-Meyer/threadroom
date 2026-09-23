@@ -6,7 +6,6 @@ import type { NativeQuestionPresentation, NativeQuestionSource, NativeSavedAnswe
 import { createReceiptJournal } from './receipt.ts';
 import { renderNativeQuestion, renderNativeAnswer, renderNativeFeedback, renderAsyncAskCall, renderAsyncAskResult } from '../questions/stream.ts';
 import type { QuestionAnswer, QuestionResult } from '../questions/types.ts';
-import { humanResponse } from '../questions/human-response.ts';
 
 const QUESTION = 'threadroom.native.question.v1';
 const ANSWER = 'threadroom.native.answer.v1';
@@ -61,8 +60,6 @@ type Prompt = { question: string; header?: string; context?: string; options?: {
 export type NativeQuestionRequest = Readonly<{ question: string; header?: string; context?: string; options?: readonly (string | Readonly<{ label: string; description?: string; preview?: string }>)[]; multiSelect?: boolean }>;
 type Question = { sessionId: string; id: string; toolCallId: string; prompt: Prompt };
 type Answer = { sessionId: string; answerId: string; questionId: string; prompt: Prompt;
-  /** Host surface the person answered through; absent on older records (terminal UI). */
-  via?: string;
   answer: { text: string; custom?: string; optionIndex?: number; selection?: { label: string; description?: string; preview?: string };
     optionIndices?: number[]; selections?: { label: string; description?: string; preview?: string }[] } };
 export type NativeQuestionWaitResult = Readonly<{
@@ -71,8 +68,6 @@ export type NativeQuestionWaitResult = Readonly<{
   answerId?: string;
   status: 'answered' | 'cancelled' | 'already_queued' | 'already_received' | 'already_claimed';
   note?: string;
-  /** Host surface an answered question was entered through. */
-  via?: string;
   /** Internal activation/handoff controls; never serialized into the tool result. */
   acceptWait?: () => void;
   acceptClaim?: () => void;
@@ -166,10 +161,10 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
     const wait = waits.get(answer.questionId); if (!wait) return;
     waits.delete(answer.questionId); wait.signal.removeEventListener('abort', wait.abort);
     const claim = claimAnswer(wait.context, wait.activation, answer.answerId);
-    wait.resolve({ sessionId: answer.sessionId, questionId: answer.questionId, answerId: answer.answerId, status: 'answered', via: answer.via ?? 'pi-tui', acceptWait: wait.acceptWait, ...claim,
+    wait.resolve({ sessionId: answer.sessionId, questionId: answer.questionId, answerId: answer.answerId, status: 'answered', acceptWait: wait.acceptWait, ...claim,
       result: Object.freeze({ answers: Object.freeze([waitAnswer(answer)]), cancelled: false }) });
   }
-  function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[]; via?: string }): NativeSavedAnswer {
+  function persistReply(ctx: ExtensionContext, mine: number, reply: { questionId: string; text: string; optionIndex?: number; optionIndices?: readonly number[] }): NativeSavedAnswer {
     if (!active(ctx, mine)) throw new Error('Original private question activation is detached.');
     const state = project(ctx), question = state.questions.get(reply.questionId);
     if (!question || state.answers.has(reply.questionId)) throw new Error('Original question is not pending on this branch.');
@@ -184,7 +179,6 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
     const labels = (selections?.filter((item): item is NonNullable<typeof item> => !!item) || []).map((item) => item.label);
     const text = [labels.join(', '), custom].filter(Boolean).join('; '); if (!text) throw new Error('Reply must not be empty.');
     const answer: Answer = { sessionId: state.sessionId, answerId: `answer-${randomUUID()}`, questionId: question.id, prompt: question.prompt,
-      ...(reply.via && reply.via !== 'pi-tui' ? { via: reply.via } : {}),
       answer: { text, ...(selection ? { optionIndex: reply.optionIndex, selection } : {}),
         ...(optionIndices ? { optionIndices, selections: selections as NonNullable<typeof selections> } : {}),
         ...(optionIndices && custom ? { custom } : {}) } };
@@ -277,8 +271,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
       if (state.received.has(answer.answerId) || submitted.has(answer.answerId) || blockingClaims.has(answer.answerId)) continue;
       submitted.add(answer.answerId); // In-flight only: never a persistence receipt.
       try {
-        pi.sendMessage({ customType: FEEDBACK, display: true,
-          details: { ...answer, humanResponse: humanResponse({ answers: [waitAnswer(answer)], cancelled: false }, 1, answer.via ?? 'pi-tui') },
+        pi.sendMessage({ customType: FEEDBACK, display: true, details: answer,
           content: `Saved private human feedback for native ask (answer identity ${answer.answerId}):\n${JSON.stringify(answer)}` },
           { deliverAs: 'steer', triggerTurn: true });
       } catch (error) {
@@ -338,7 +331,7 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
       if (blockingClaims.has(answered.answerId)) return { sessionId: answered.sessionId, questionId: id, acceptWait,
         answerId: answered.answerId, status: 'already_claimed', note: 'Another blocking result already owns delivery of this saved answer.', result };
       const claim = claimAnswer(ctx, epoch, answered.answerId);
-      return { sessionId: answered.sessionId, questionId: id, answerId: answered.answerId, status: 'answered', via: answered.via ?? 'pi-tui', acceptWait, ...claim,
+      return { sessionId: answered.sessionId, questionId: id, answerId: answered.answerId, status: 'answered', acceptWait, ...claim,
         result: Object.freeze({ answers: Object.freeze([waitAnswer(answered)]), cancelled: false }) };
     }
     if (!state.questions.has(id)) throw Object.assign(new Error('That private question does not belong to this session branch.'), { code: 'unknown_question' });

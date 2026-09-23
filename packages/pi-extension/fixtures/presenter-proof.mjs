@@ -51,7 +51,7 @@ proof.blockingOffered = { mode: offered.group.mode, required: offered.group.requ
   terminalShown: tui.getFocusedComponent() === widget };
 proof.blockingSubmit = offered.group.submit({ replies: [{ questionId: offered.group.questions[0].id, choices: [0], notes: 'softer' }] });
 const firstResult = await first; await tick();
-proof.blockingResult = { humanResponse: firstResult.details.humanResponse, terminalReleased: tui.getFocusedComponent() === input,
+proof.blockingResult = { answers: firstResult.details.answers, cancelled: firstResult.details.cancelled, terminalReleased: tui.getFocusedComponent() === input,
   secondSubmit: offered.group.submit({ replies: [], cancelled: true }) };
 
 // Blocking, answered in the terminal: the presenter's copy is dismissed.
@@ -59,7 +59,7 @@ const second = ask.execute('blocking-terminal', { questions: [{ question: 'Ship 
 await tick(); const terminalOffer = shown.at(-1);
 widget.handleInput('\r');
 const secondResult = await second; await tick();
-proof.terminalAnswered = { dismissed: terminalOffer.dismissed, via: secondResult.details.humanResponse.answeredBy.via, chose: secondResult.details.humanResponse.answers[0].chose };
+proof.terminalAnswered = { dismissed: terminalOffer.dismissed, answer: secondResult.details.answers[0].answer };
 
 // Async: shown passively, becomes required when the AI waits, answered in the presenter.
 const pending = await ask.execute('async', { blocking: false, questions: [{ question: 'Later: which palette?', options }] }, undefined, () => {}, ctx);
@@ -70,7 +70,7 @@ await tick();
 await asyncOffer.group.commit({ questionId: asyncOffer.group.questions[0].id, text: 'Warmer than both' });
 const waited = await waiting; await tick();
 proof.asyncAnswered = { updates: asyncOffer.updates, dismissed: asyncOffer.dismissed, waitStatus: waited.details.waitStatus,
-  humanResponse: waited.details.humanResponse, terminalReleased: tui.getFocusedComponent() === input };
+  answers: waited.details.answers, terminalReleased: tui.getFocusedComponent() === input };
 
 for (const handler of extension.handlers.get('session_shutdown') || []) await handler({}, ctx);
 process.stdout.write(JSON.stringify(proof));

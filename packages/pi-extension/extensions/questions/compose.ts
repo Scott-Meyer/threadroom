@@ -38,15 +38,15 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
           for (const question of questions) {
             let handle = handles.get(question.id);
             if (!handle) {
-              const commit = (questionId: string, answer: QuestionAnswer, via?: string) => {
+              const commit = (questionId: string, answer: QuestionAnswer) => {
                 if (!live) throw Object.assign(new Error('Private source detached.'), { code: 'presentation_detached' });
-                binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex, optionIndices: answer.optionIndices, ...(via ? { via } : {}) });
+                binding.commit({ questionId, text: answer.answer || '', optionIndex: answer.optionIndex, optionIndices: answer.optionIndices });
               };
               const release = (questionId: string) => { if (live) binding.cancelWait(questionId); };
               const group: QuestionGroup = { id: `native:${question.id}`, mode: 'async', questions: [{ id: question.id, question: question.prompt.question,
                 header: question.prompt.header, context: question.prompt.context, options: question.prompt.options,
                 multiSelect: question.prompt.multiSelect, plainPreview: true, allowNotes: false }],
-                commit: (questionId, answer) => commit(questionId, answer), releaseRequirement: release };
+                commit, releaseRequirement: release };
               const terminal = captured.enqueue(group);
               const offer = mirror.offer({ group, sessionId: binding.sessionId, commit, release });
               handle = { detach() { offer.close('withdrawn'); terminal.detach(); }, answered() { offer.close('answered'); terminal.answered(); },
@@ -77,14 +77,12 @@ export function registerPrivateQuestions(pi: ExtensionAPI) {
     if (!supportsQuestionHost(ctx)) throw Object.assign(new Error('This Pi host does not expose inline widgets; no question was presented and no human declined.'), { code: 'unsupported_host' });
     const accept = native.captureAdmission(ctx);
     const handle = ensure(ctx).enqueue(group), detach = () => handle.detach();
-    let via: string | undefined;
-    const offer = mirror.offer({ group, sessionId: ctx.sessionManager.getSessionId(),
-      submit(result, presenter) { if (!handle.settle(result)) return false; via = presenter; return true; } });
+    const offer = mirror.offer({ group, sessionId: ctx.sessionManager.getSessionId(), submit: (result) => handle.settle(result) });
     if (signal?.aborted) detach(); else signal?.addEventListener('abort', detach, { once: true });
     try {
       const result = await handle.outcome!;
       offer.close(result.cancelled ? 'cancelled' : 'answered');
-      return { result, accept, ...(via ? { via } : {}) };
+      return { result, accept };
     } catch (error) { offer.close('withdrawn'); throw error; } finally { signal?.removeEventListener('abort', detach); }
   }, native.waitForQuestion, native.captureAdmission,
   (toolCallId, question, ctx, signal) => native.askQuestion(toolCallId, question, signal, ctx));

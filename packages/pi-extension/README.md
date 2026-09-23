@@ -36,21 +36,9 @@ Saving an answer, queueing feedback and recording its consumption receipt are di
 
 The SDK can mutate memory before a failed disk write. Native records then remain **storage unconfirmed**: further private writes/delivery are blocked on that manager/session, even after `/reload`. Feedback receipts require a complete physical session-file row; memory-only hosts make no disk assertion. A pre-append refusal without branch mutation remains retryable. Recover the original journal and preserve/copy drafts before replacing the process; do not quit/resume as a storage-error feedback retry. This guard is not SDK journal rollback or repair.
 
-### What observers can read
-
-Other extensions (advisors, hosts, history views) can learn what the person did without reading Threadroom internals. Blocking results, blocking waits that return an answer, and late `threadroom.native.feedback.v1` messages carry `details.humanResponse`:
-
-```json
-{ "version": 1, "outcome": "answered",
-  "answeredBy": { "kind": "person", "via": "pi-tui" },
-  "answers": [{ "question": "Which direction?", "chose": ["Wide silhouette"], "wrote": "but softer edges", "notes": "..." }] }
-```
-
-`outcome` is `answered`, `partial` (some questions skipped), or `cancelled` (the person dismissed it). Aborts, timeouts, and hosts without a UI are tool errors, never a `humanResponse`. `chose` lists AI-written suggestion labels the person picked; only `wrote` and `notes` are the person’s own words. `via` names the host surface (`pi-tui`, `pi-rpc-dialog`, another `pi-<mode>-dialog`, or `presenter:<id>` for another extension’s UI); an RPC client or presenter is code that may be automated, and none of this verifies identity. Wait results with `already_*` statuses carry no new answer. Unknown `version` values should be ignored. Everything else in `details` and all result text are for the primary model and may change.
-
 ### Showing questions in another UI
 
-A host extension in the same Pi process (for example a desktop app’s bridge) can show private questions in its own UI. Threadroom still saves answers, tracks pending and required state, and delivers feedback. The presenter only shows questions and returns what the person did. The terminal surface stays up too: the person can answer in either place, and the other copy is dismissed. Answers record `answeredBy.via: "presenter:<id>"`.
+A host extension in the same Pi process (for example a desktop app’s bridge) can show private questions in its own UI. Threadroom still saves answers, tracks pending and required state, and delivers feedback. The presenter only shows questions and returns what the person did. The terminal surface stays up too: the person can answer in either place, and the other copy is dismissed.
 
 ```ts
 const presenter = { id: 'flightdeck', present(group) {

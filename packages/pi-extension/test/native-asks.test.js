@@ -103,9 +103,6 @@ test('loaded native boundary saves stable identities, leaves pending on Escape, 
   assert.equal(answer.prompt.question, 'What should I refine?');
   assert.deepEqual(answer.answer, { text: 'My ordinary free answer' });
   assert.deepEqual(f.deliveries[0].options, { deliverAs: 'steer', triggerTurn: true });
-  assert.deepEqual(f.deliveries[0].message.details.humanResponse, { version: 1, outcome: 'answered',
-    answeredBy: { kind: 'person', via: 'pi-tui' }, answers: [{ question: 'What should I refine?', wrote: 'My ordinary free answer' }] },
-    'late feedback tells observers the person wrote this answer');
   assert.match(f.statuses.at(-1)[1], /saved feedback/, 'sendMessage void is not a saved receipt');
   await f.open();
   assert.match(f.notices.at(-1)[0], /My ordinary free answer/);

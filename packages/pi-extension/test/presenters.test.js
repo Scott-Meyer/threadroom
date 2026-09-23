@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const sdk = process.env.THREADROOM_PI_SDK_ROOT;
 
 // A host extension shows private questions in its own UI; the terminal stays usable,
-// whichever surface the person answers in wins, and provenance says which it was.
+// and whichever surface the person answers in wins.
 test('another extension can present private questions and answer them', { skip: !sdk && 'Pi peer absent; set THREADROOM_PI_SDK_ROOT', timeout: 30000 }, () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const fixture = fileURLToPath(new URL('../fixtures/presenter-proof.mjs', import.meta.url));
@@ -24,15 +24,15 @@ test('another extension can present private questions and answer them', { skip: 
   assert.deepEqual(proof.blockingOffered, { mode: 'blocking', required: false, questions: ['Which silhouette?', 'Anything else?'], terminalShown: true },
     'a presenter loaded before Threadroom still receives the group, and the terminal shows it too');
   assert.equal(proof.blockingSubmit, true);
-  assert.deepEqual(proof.blockingResult, { terminalReleased: true, secondSubmit: false, humanResponse: { version: 1, outcome: 'partial',
-    answeredBy: { kind: 'person', via: 'presenter:test' }, answers: [{ question: 'Which silhouette?', chose: ['Wide'], notes: 'softer' }] } },
+  assert.deepEqual(proof.blockingResult, { terminalReleased: true, secondSubmit: false, cancelled: false,
+    answers: [{ questionIndex: 0, question: 'Which silhouette?', notes: 'softer', answer: 'Wide', optionIndex: 0, wasCustom: false, preview: 'W' }] },
     'answering in the presenter finishes the tool call, releases the terminal, and cannot be submitted twice');
 
-  assert.deepEqual(proof.terminalAnswered, { dismissed: 'answered', via: 'pi-tui', chose: ['Wide'] },
+  assert.deepEqual(proof.terminalAnswered, { dismissed: 'answered', answer: 'Wide' },
     'answering in the terminal dismisses the presenter copy');
 
   assert.deepEqual(proof.asyncOffered, { mode: 'async', required: false, notes: false });
   assert.deepEqual(proof.asyncAnswered, { updates: [true], dismissed: 'answered', waitStatus: 'answered', terminalReleased: true,
-    humanResponse: { version: 1, outcome: 'answered', answeredBy: { kind: 'person', via: 'presenter:test' }, answers: [{ question: 'Later: which palette?', wrote: 'Warmer than both' }] } },
+    answers: [{ questionIndex: 0, question: 'Later: which palette?', answer: 'Warmer than both', wasCustom: true }] },
     'a nonblocking question becomes required when the AI waits, and a presenter answer is saved and delivered once');
 });

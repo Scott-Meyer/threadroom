@@ -55,8 +55,8 @@ export type QuestionPresenterV1 = Readonly<{
 }>;
 
 type Offer = { group: QuestionGroup; sessionId: string; required: boolean; closed: boolean; handles: Map<string, PresentationHandleV1>;
-  submit?: (result: QuestionResult, via: string) => boolean;
-  commit?: (questionId: string, answer: QuestionAnswer, via: string) => void | Promise<void>;
+  submit?: (result: QuestionResult) => boolean;
+  commit?: (questionId: string, answer: QuestionAnswer) => void | Promise<void>;
   release?: (questionId: string) => void };
 
 function answerFor(spec: QuestionSpec, index: number, reply: PresenterReplyV1): QuestionAnswer | undefined {
@@ -91,8 +91,7 @@ export function createPresenterMirror(pi: ExtensionAPI) {
     if (index < 0) throw new Error(`Unknown question ${questionId}.`);
     return { spec: offer.group.questions[index], index };
   };
-  function view(offer: Offer, presenterId: string): PresentedGroupV1 {
-    const via = `presenter:${presenterId}`;
+  function view(offer: Offer): PresentedGroupV1 {
     return Object.freeze({
       id: offer.group.id, sessionId: offer.sessionId, mode: offer.group.mode, required: offer.required,
       questions: Object.freeze(offer.group.questions.map((spec) => Object.freeze({
@@ -103,19 +102,19 @@ export function createPresenterMirror(pi: ExtensionAPI) {
         if (offer.closed || !offer.submit) return false;
         const answers = result.replies.flatMap((reply) => { const { spec, index } = specOf(offer, reply.questionId); const answer = answerFor(spec, index, reply); return answer ? [answer] : []; })
           .sort((a, b) => a.questionIndex - b.questionIndex);
-        return offer.submit(Object.freeze({ answers: Object.freeze(answers), cancelled: !!result.cancelled }), via);
+        return offer.submit(Object.freeze({ answers: Object.freeze(answers), cancelled: !!result.cancelled }));
       },
       async commit(reply) {
         if (offer.closed || !offer.commit) throw Object.assign(new Error('This question is no longer pending here.'), { code: 'presentation_detached' });
         const { spec, index } = specOf(offer, reply.questionId), answer = answerFor(spec, index, reply);
         if (!answer) throw new Error('Reply must not be empty.');
-        await offer.commit(reply.questionId, answer, via);
+        await offer.commit(reply.questionId, answer);
       },
       release(questionId) { if (!offer.closed && offer.required) offer.release?.(questionId); },
     });
   }
   function show(offer: Offer, presenter: QuestionPresenterV1) {
-    safely(() => { const handle = presenter.present(view(offer, presenter.id)); if (handle) offer.handles.set(presenter.id, handle); });
+    safely(() => { const handle = presenter.present(view(offer)); if (handle) offer.handles.set(presenter.id, handle); });
   }
   function withdraw(offer: Offer, presenterId: string) {
     const handle = offer.handles.get(presenterId); offer.handles.delete(presenterId);

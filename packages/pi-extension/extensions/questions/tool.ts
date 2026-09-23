@@ -3,11 +3,10 @@ import { truncateHead } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { QuestionAnswer, QuestionGroup, QuestionResult } from './types.ts';
 import { renderPrivateAskCall, renderPrivateAskResult } from './stream.ts';
-import { dialogVia, humanResponse } from './human-response.ts';
 
 /** TUI presentation owns interaction; rejection means no human cancellation result.
  * Composed hosts carry their originating native activation through final return. */
-export type QuestionPresentation = QuestionResult | Readonly<{ result: QuestionResult; accept: () => void; via?: string }>;
+export type QuestionPresentation = QuestionResult | Readonly<{ result: QuestionResult; accept: () => void }>;
 export type QuestionPresenter = (
   group: QuestionGroup, ctx: ExtensionContext, signal?: AbortSignal,
 ) => Promise<QuestionPresentation>;
@@ -172,7 +171,6 @@ export type ExistingQuestionWait = (questionId: string, ctx: ExtensionContext, s
   answerId?: string;
   status: 'answered' | 'cancelled' | 'already_queued' | 'already_received' | 'already_claimed';
   note?: string;
-  via?: string;
   acceptWait?: () => void;
   acceptClaim?: () => void;
   releaseClaim?: () => void;
@@ -285,7 +283,6 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
               groupId: `native:${waited.questionId}`, sessionId: waited.sessionId, questionId: waited.questionId,
               waitStatus: waited.status, ...(waited.note ? { waitNote: waited.note } : {}),
               ...(waited.status === 'answered' && waited.answerId ? { receivedNativeAnswerIds: [waited.answerId] } : {}), ...waited.result,
-              ...(waited.status === 'answered' ? { humanResponse: humanResponse(waited.result, 1, waited.via ?? 'pi-tui') } : {}),
             } };
           } catch (error) { waited?.releaseClaim?.(); throw error; }
         }
@@ -303,9 +300,7 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
         lifetime.throwIfAborted();
         const result = 'result' in presented ? presented.result : presented;
         if ('result' in presented) presented.accept(); else acceptCompletion?.();
-        const via = ('result' in presented && presented.via) || (ctx.mode === 'tui' ? 'pi-tui' : dialogVia(ctx.mode));
-        return { content: [{ type: 'text', text: resultText(result) }],
-          details: { groupId: group.id, ...result, humanResponse: humanResponse(result, group.questions.length, via) } };
+        return { content: [{ type: 'text', text: resultText(result) }], details: { groupId: group.id, ...result } };
       } finally {
         active.delete(controller);
       }
