@@ -10,6 +10,7 @@ export class ThreadroomClient {
     return result;
   }
   tree() { return this.request('/api/tree'); }
+  attention() { return this.request('/api/attention'); }
   read(id) { return this.request(`/api/nodes/${encodeURIComponent(id)}`); }
   publish(input, key) { return this.request('/api/nodes', { method: 'POST',
     headers: key ? { 'Idempotency-Key': key } : {}, body: JSON.stringify(input) }); }

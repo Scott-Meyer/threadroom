@@ -619,6 +619,63 @@ test('removing second-spike node kinds preserves history and original publish/re
 });
 
 
+test('attention is a standalone ordered inbox with the website lifecycle meaning', async () => {
+  const service = await runningService(':memory:');
+  const client = new ThreadroomClient(service.url);
+  try {
+    const first = await client.ask({
+      path: ['Attention project', 'Movement review'],
+      question: 'Which movement should lead?',
+      context: 'Choose the direction that reads at gameplay distance.',
+      author: { name: 'Mara', id: 'artist-1', sessionId: 'art-session' }
+    });
+    const second = await client.ask({
+      project: 'Attention project',
+      question: 'Should the trail remain?',
+      author: { name: 'Ivo', role: 'Designer' }
+    });
+    await client.publish({ title: 'An unrelated note', body: 'This never requested an answer.' });
+
+    let attention = await client.attention();
+    assert.deepEqual(attention.items.map(item => item.node.id), [first.node.id, second.node.id]);
+    const movement = attention.items[0];
+    assert.equal(movement.node.title, 'Which movement should lead?');
+    assert.equal(movement.node.body, 'Choose the direction that reads at gameplay distance.');
+    assert.equal(movement.node.status, 'outstanding');
+    assert.equal(movement.node.expectsAnswer, true);
+    assert.deepEqual(movement.node.author, { name: 'Mara', id: 'artist-1', sessionId: 'art-session' });
+    assert.ok(!Number.isNaN(Date.parse(movement.node.createdAt)));
+    assert.deepEqual(movement.ancestors.map(node => node.title), ['Attention project', 'Movement review']);
+    assert.ok(movement.ancestors.every(node => node.id && Object.hasOwn(node, 'author') && Object.hasOwn(node, 'status')));
+    assert.equal(movement.url, `/threads/${encodeURIComponent(first.node.id)}`);
+
+    await client.reply(first.node.id, { body: 'Lead with the floating movement.' });
+    attention = await client.attention();
+    assert.deepEqual(attention.items.map(item => item.node.id), [second.node.id]);
+
+    await client.reply(second.node.id, { kind: 'clarification', body: 'Show how it looks around a corner first.' });
+    assert.deepEqual((await client.attention()).items, []);
+    await client.reply(second.node.id, { kind: 'team_reply', body: 'The corner study is ready; please choose now.' });
+    assert.deepEqual((await client.attention()).items.map(item => item.node.id), [second.node.id]);
+
+    const followUp = await client.reply(first.node.id, {
+      title: 'How soft should the leading edge be?',
+      body: 'The answer raised one narrower choice.',
+      expectsAnswer: true
+    });
+    attention = await client.attention();
+    assert.deepEqual(attention.items.map(item => item.node.id), [second.node.id, followUp.node.id]);
+    assert.equal(attention.items[1].node.response.kind, 'answer');
+    assert.deepEqual(attention.items[1].ancestors.map(node => node.title),
+      ['Attention project', 'Movement review', 'Which movement should lead?']);
+
+    const events = (await request(service, '/api/events?after=0')).result.events;
+    assert.ok(events.some(event => event.type === 'node.created'));
+    assert.ok(events.some(event => event.type === 'response.created'));
+  } finally { await service.close(); }
+});
+
+
 test('ordinary client asks in a named project and replies without describing a tree or node types', async () => {
   const service = await runningService(':memory:');
   const client = new ThreadroomClient(service.url);

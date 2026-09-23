@@ -46,6 +46,7 @@ export class ThreadStore {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS nodes_parent_idx ON nodes(parent_id, created_at);
+      CREATE INDEX IF NOT EXISTS nodes_attention_idx ON nodes(status, created_at);
       CREATE TABLE IF NOT EXISTS events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         id TEXT NOT NULL UNIQUE,
@@ -63,6 +64,37 @@ export class ThreadStore {
 
   listNodes() {
     return this.db.prepare('SELECT * FROM nodes ORDER BY created_at, rowid').all().map((row) => this.#node(row));
+  }
+
+  listAttention() {
+    const rows = this.db.prepare("SELECT * FROM nodes WHERE status = 'outstanding' ORDER BY created_at, rowid").all();
+    if (rows.length === 0) return [];
+    // Start from the indexed attention set and walk only the ancestor paths a
+    // standalone inbox row needs. Unlike /api/tree, unrelated branches and
+    // their captured presentation content never enter this read.
+    const ancestorRows = this.db.prepare(`WITH RECURSIVE lineage(
+      attention_id, id, parent_id, title, author_json, expects_answer, status, depth
+    ) AS (
+      SELECT child.id, parent.id, parent.parent_id, parent.title, parent.author_json,
+        parent.expects_answer, parent.status, 1
+      FROM nodes child JOIN nodes parent ON parent.id = child.parent_id
+      WHERE child.status = 'outstanding'
+      UNION ALL
+      SELECT lineage.attention_id, parent.id, parent.parent_id, parent.title, parent.author_json,
+        parent.expects_answer, parent.status, lineage.depth + 1
+      FROM lineage JOIN nodes parent ON parent.id = lineage.parent_id
+    )
+    SELECT * FROM lineage ORDER BY attention_id, depth DESC`).all();
+    const ancestorsById = new Map(rows.map((row) => [row.id, []]));
+    for (const ancestor of ancestorRows) ancestorsById.get(ancestor.attention_id)?.push({
+      id: ancestor.id, parentId: ancestor.parent_id, title: ancestor.title,
+      author: parse(ancestor.author_json, {}), expectsAnswer: !!ancestor.expects_answer, status: ancestor.status
+    });
+    return rows.map((row) => ({
+      node: this.#node(row),
+      ancestors: ancestorsById.get(row.id),
+      url: `/threads/${encodeURIComponent(row.id)}`
+    }));
   }
 
   getNode(nodeId) {

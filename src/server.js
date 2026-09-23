@@ -35,6 +35,9 @@ export function createThreadroomServer(store, { websiteHandler = null, allowedOr
       if (url.pathname === '/api/health' && request.method === 'GET') return json(response, 200, {
         ok: true, service: 'threadroom', apiVersion: 2, website: !!websiteHandler, ...runtimeIdentity
       });
+      if (url.pathname === '/api/attention' && request.method === 'GET') {
+        return json(response, 200, { items: store.listAttention() });
+      }
       if (url.pathname === '/api/tree' && request.method === 'GET') {
         const nodes = store.listNodes().map(({ presentation, response: savedResponse, body: savedBody, ...summary }) => ({
           ...summary, responseKind: savedResponse?.kind || null, hasPresentation: !!presentation

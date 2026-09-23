@@ -78,6 +78,18 @@ Text/select (`text-v1`) and image comparisons (`comparison-v1`) are convenience 
 
 The opaque sandbox has no ambient host DOM, model credentials, filesystem, or fetch capability. See README for isolation limits; arbitrary external effects would need explicit backend capabilities.
 
+## Read what needs the person's answer
+
+```sh
+curl -s http://127.0.0.1:4310/api/attention
+```
+
+Returns `{items: [{node, ancestors, url}]}` for every node whose current status is `outstanding`, oldest asked first. `node` and `ancestors` have the same shapes as publication and node reads, so each item carries its stable identity, question title and context, author metadata, status, `createdAt`, captured presentation, and complete placement without another call. The `url` is the website convenience address.
+
+`outstanding` is the same lifecycle state shown by the website as **Needs your answer**. An answer, rejection, clarification, or deferral removes its target; a `team_reply` reopens its target. Since answer requests and response context are independent node capabilities, a response that itself requests an answer is also an item. Unrelated descendants do not change a node's status or make it appear here.
+
+This read starts from an indexed current-status set and walks only those nodes' ancestor paths; it does not load unrelated outline branches. The reference website uses this endpoint for its attention count and list. For live consumers, refresh after `node.created` or `response.created`; clients that also use the first-spike compatibility writes refresh after `thread.created` and `question.created` too. These events can add or remove attention items, including when a saved response also requests an answer. Reconnect through the event cursor as usual before refreshing.
+
 ## Read the tree or a node
 
 ```sh
@@ -146,10 +158,12 @@ Stable payload fields for session watches:
 
 | Event type | Payload | Meaning |
 | --- | --- | --- |
-| `node.created` | `nodeId`, `parentId` | Created leaf and its direct parent (or `null`). |
-| `response.created` | `questionId`, `responseId`, `kind` | Target node, saved child node, and response intent. |
+| `node.created` | `nodeId`, `parentId` | Created leaf and its direct parent (or `null`). May add an attention item. |
+| `response.created` | `questionId`, `responseId`, `kind` | Target node, saved child node, and response intent. May change the target's attention state or add the response itself. |
+| `thread.created` | `threadId`, `questionIds` | Compatibility thread publication; its questions may add attention items. |
+| `question.created` | `threadId`, `questionId` | Compatibility question publication; may add an attention item. |
 
-`questionId` is a historical name for the target ID, not a node type; replies can target any node. Additional fields/event types may appear without changing these meanings. Idempotent retries recover receipts without appending duplicate events. An event is a committed change signal; read the referenced node for its captured content.
+`questionId` is a historical name for the target ID, not a node type; replies can target any node. Attention consumers refresh `GET /api/attention` after these events rather than reconstructing lifecycle state from event fields. Additional fields/event types may appear without changing these meanings. Idempotent retries recover receipts without appending duplicate events. An event is a committed change signal; read the referenced node for its captured content.
 
 Subscriptions/waits are live transport, not the only copy of a response. No Pi session or website owns persistence. Notification acknowledgements/exactly-once external actions are not claimed.
 

@@ -9,7 +9,7 @@ const initials = (name = '?') => name.replace(/\([^)]*\)/g,'').trim().split(/\s+
 const time = (iso) => new Intl.DateTimeFormat(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).format(new Date(iso));
 const statusLabels = { outstanding:'NEEDS YOUR ANSWER', answered:'ANSWERED', waiting_on_team:'WAITING ON TEAM', deferred:'DEFERRED', rejected:'REJECTED' };
 const responseLabels = { answer:'Answered', reject:'Rejected with reason', clarification:'Asked back', defer:'Deferred', team_reply:'Team replied' };
-const state = { nodes:[], byId:new Map(), children:new Map(), expanded:new Set(), selected:null, zoomId:null, view:'outline', query:'', dialogParentId:null, drafts:new Map(), saving:new Map(), readGeneration:0, readingId:null };
+const state = { nodes:[], attentionItems:[], byId:new Map(), children:new Map(), expanded:new Set(), selected:null, zoomId:null, view:'outline', query:'', dialogParentId:null, drafts:new Map(), saving:new Map(), readGeneration:0, readingId:null };
 let client;
 let cleanupCanvas = () => {};
 
@@ -32,14 +32,15 @@ function ancestorsOf(id) {
 function inBranch(node, rootId) { return !rootId || node.id === rootId || ancestorsOf(node.id).some((parent) => parent.id === rootId); }
 
 async function refreshTree() {
-  const { nodes } = await client.tree();
+  const [{ nodes }, { items }] = await Promise.all([client.tree(),client.attention()]);
   rebuildTree(nodes);
+  state.attentionItems = items;
   renderSidebar();
   renderOutline();
 }
 
 function renderSidebar() {
-  $('#needsCount').textContent = state.nodes.filter((node) => node.status === 'outstanding').length;
+  $('#needsCount').textContent = state.attentionItems.length;
   $('#teamCount').textContent = state.nodes.filter((node) => node.status === 'waiting_on_team').length;
   $('#deferredCount').textContent = state.nodes.filter((node) => node.status === 'deferred').length;
 }
@@ -54,7 +55,10 @@ function renderOutline() {
   $$('[data-zoom]', $('#outlineCrumbs')).forEach((button) => button.addEventListener('click', () => zoom(button.dataset.zoom || null)));
   const query = state.query.toLowerCase();
   let html;
-  if (state.view !== 'outline' || query) {
+  if (state.view === 'outstanding') {
+    const items = state.attentionItems.filter(({node}) => !query || [node.title,node.author.name].join(' ').toLowerCase().includes(query));
+    html = items.map(({node,ancestors}) => `<div class="outline-context">${esc(ancestors.map((parent) => parent.title).join(' › '))}</div>${outlineRow(node,0,false)}`).join('');
+  } else if (state.view !== 'outline' || query) {
     const nodes = state.nodes.filter((node) => (state.view !== 'outline' || inBranch(node,state.zoomId)) && (state.view === 'outline' || node.status === state.view) && (!query || [node.title,node.author.name].join(' ').toLowerCase().includes(query)));
     html = nodes.map((node) => `<div class="outline-context">${esc(ancestorsOf(node.id).map((parent) => parent.title).join(' › '))}</div>${outlineRow(node,0,false)}`).join('');
   } else {
@@ -297,6 +301,11 @@ $('#newThreadForm').addEventListener('submit',async (event) => {
   const updated = new Map(state.nodes.map((node) => [node.id,node]));
   for (const node of [...result.ancestors,result.node,...result.children]) updated.set(node.id,{...updated.get(node.id),...node});
   rebuildTree([...updated.values()]);
+  if (result.node.status === 'outstanding') {
+    const attention = new Map(state.attentionItems.map((item) => [item.node.id,item]));
+    attention.set(result.node.id,{node:result.node,ancestors:result.ancestors,url:result.url});
+    state.attentionItems = [...attention.values()].sort((a,b) => a.node.createdAt.localeCompare(b.node.createdAt));
+  }
   for (const ancestor of result.ancestors) state.expanded.add(ancestor.id);
   if (!result.node.parentId) state.zoomId = null;
   ++state.readGeneration;
