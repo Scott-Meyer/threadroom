@@ -3,6 +3,7 @@ import { truncateHead } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { QuestionAnswer, QuestionGroup, QuestionResult } from './types.ts';
 import { renderPrivateAskCall, renderPrivateAskResult } from './stream.ts';
+import { dialogVia, humanResponse } from './human-response.ts';
 
 /** TUI presentation owns interaction; rejection means no human cancellation result.
  * Composed hosts carry their originating native activation through final return. */
@@ -283,6 +284,7 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
               groupId: `native:${waited.questionId}`, sessionId: waited.sessionId, questionId: waited.questionId,
               waitStatus: waited.status, ...(waited.note ? { waitNote: waited.note } : {}),
               ...(waited.status === 'answered' && waited.answerId ? { receivedNativeAnswerIds: [waited.answerId] } : {}), ...waited.result,
+              ...(waited.status === 'answered' ? { humanResponse: humanResponse(waited.result, 1, 'pi-tui') } : {}),
             } };
           } catch (error) { waited?.releaseClaim?.(); throw error; }
         }
@@ -300,7 +302,9 @@ export function registerBlockingQuestions(pi: ExtensionAPI, present: QuestionPre
         lifetime.throwIfAborted();
         const result = 'result' in presented ? presented.result : presented;
         if ('result' in presented) presented.accept(); else acceptCompletion?.();
-        return { content: [{ type: 'text', text: resultText(result) }], details: { groupId: group.id, ...result } };
+        const via = ctx.mode === 'tui' ? 'pi-tui' : dialogVia(ctx.mode);
+        return { content: [{ type: 'text', text: resultText(result) }],
+          details: { groupId: group.id, ...result, humanResponse: humanResponse(result, group.questions.length, via) } };
       } finally {
         active.delete(controller);
       }

@@ -102,7 +102,10 @@ test('TUI delegation retains stable group/local IDs and exact authored partial, 
     return { answers, cancelled: true };
   };
   const result = await f.ask('TEST-call', [spec('TEST unanswered?'), spec('TEST multi?', { multiSelect: true })]);
-  assert.deepEqual(result.details, { groupId: 'blocking:TEST-call', answers, cancelled: true });
+  assert.deepEqual(result.details, { groupId: 'blocking:TEST-call', answers, cancelled: true, humanResponse: {
+    version: 1, outcome: 'cancelled', answeredBy: { kind: 'person', via: 'pi-tui' },
+    answers: [{ question: 'TEST multi?', chose: ['Same', 'Same'], wrote: 'TEST additional custom', notes: 'TEST open notes' }] } },
+    'observers learn which AI-written labels were chosen and which text the person wrote');
   assert.deepEqual(JSON.parse(result.content[0].text), { answers, cancelled: true });
   await f.ask('TEST-call', [spec('TEST unanswered?'), spec('TEST multi?', { multiSelect: true })]);
   assert.equal(seen[0].id, seen[1].id);
@@ -139,6 +142,8 @@ test('RPC numbered duplicates preserve second single option, original partial in
   assert.deepEqual(result.details.answers, [{ questionIndex: 1, question: 'TEST answered?', notes: 'TEST single note',
     answer: 'Same', optionIndex: 1, wasCustom: false, preview: 'TEST_SECOND_PREVIEW' }]);
   assert.equal(result.details.cancelled, false); assert.equal(steps.length, 0);
+  assert.deepEqual(result.details.humanResponse, { version: 1, outcome: 'partial', answeredBy: { kind: 'person', via: 'pi-rpc-dialog' },
+    answers: [{ question: 'TEST answered?', chose: ['Same'], notes: 'TEST single note' }] }, 'a skipped question makes the response partial');
   assert.ok(calls.some((call) => call.choices?.some((choice) => choice.includes('TEST_SECOND_PREVIEW'))));
 });
 
@@ -173,7 +178,8 @@ test('concurrent blocking producers have independent signals and source-local co
   assert.equal(groups.get('blocking:TEST-B').signal.aborted, false);
   const answer = { questionIndex: 0, question: 'TEST B?', optionIndex: 1, answer: 'Same', preview: 'TEST_SECOND_PREVIEW' };
   groups.get('blocking:TEST-B').resolve({ answers: [answer], cancelled: false });
-  assert.deepEqual((await second).details, { groupId: 'blocking:TEST-B', answers: [answer], cancelled: false });
+  const { humanResponse: _, ...completed } = (await second).details;
+  assert.deepEqual(completed, { groupId: 'blocking:TEST-B', answers: [answer], cancelled: false });
 });
 
 test('human Cancel is distinct from unsupported, tool abort, scope abort and session detachment', options, async (t) => {
@@ -278,7 +284,8 @@ test('same-registration session_start reopens TUI requests without reviving outg
     await tick(); assert.equal(settled, false); assert.equal(current.signal.aborted, false);
     const expected = { questionIndex: 0, question: question.question, answer: 'Same', optionIndex: 1, preview: 'TEST_SECOND_PREVIEW' };
     current.resolve({ answers: [expected], cancelled: false });
-    assert.deepEqual((await fresh).details, { groupId: 'blocking:TEST_NEW', answers: [expected], cancelled: false });
+    const { humanResponse: _, ...completed } = (await fresh).details;
+    assert.deepEqual(completed, { groupId: 'blocking:TEST_NEW', answers: [expected], cancelled: false });
     assert.equal(old.signal.aborted, true);
   } finally { await f.emit('session_shutdown', freshCtx); await fresh.catch(() => {}); }
 });

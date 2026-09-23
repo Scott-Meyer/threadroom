@@ -6,6 +6,7 @@ import type { NativeQuestionPresentation, NativeQuestionSource, NativeSavedAnswe
 import { createReceiptJournal } from './receipt.ts';
 import { renderNativeQuestion, renderNativeAnswer, renderNativeFeedback, renderAsyncAskCall, renderAsyncAskResult } from '../questions/stream.ts';
 import type { QuestionAnswer, QuestionResult } from '../questions/types.ts';
+import { humanResponse } from '../questions/human-response.ts';
 
 const QUESTION = 'threadroom.native.question.v1';
 const ANSWER = 'threadroom.native.answer.v1';
@@ -271,7 +272,8 @@ export function registerNativeAsks(pi: ExtensionAPI, options: {
       if (state.received.has(answer.answerId) || submitted.has(answer.answerId) || blockingClaims.has(answer.answerId)) continue;
       submitted.add(answer.answerId); // In-flight only: never a persistence receipt.
       try {
-        pi.sendMessage({ customType: FEEDBACK, display: true, details: answer,
+        pi.sendMessage({ customType: FEEDBACK, display: true,
+          details: { ...answer, humanResponse: humanResponse({ answers: [waitAnswer(answer)], cancelled: false }, 1, 'pi-tui') },
           content: `Saved private human feedback for native ask (answer identity ${answer.answerId}):\n${JSON.stringify(answer)}` },
           { deliverAs: 'steer', triggerTurn: true });
       } catch (error) {
